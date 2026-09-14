@@ -1073,11 +1073,16 @@ Project drag/drop follows these patterns:
 
 ### 8a.2 Reference chips and clipboard files
 
-- A paste containing one or more OS `File` objects is intercepted in the
-  textarea. Text-only paste stays native when its character count is at or
-  below the persisted `largePasteThreshold` (default 600); text-only paste
-  above the threshold is intercepted and converted into a temporary session
-  file reference.
+- Select non-whitespace `text/plain` over accompanying generated `image/*`
+  copies only when every file lacks a native path (Word text selection).
+  Native files, any non-image file, and image-only/whitespace-plus-image paste
+  retain their attachment flow. This uses the existing preload file-path
+  resolver and does not reread the system clipboard.
+- Selected text stays editable when its character count is at or below the
+  persisted `largePasteThreshold` (default 600); larger text becomes a temporary
+  session file reference. Small multiline paste preserves blank/trailing lines,
+  surrounding text, caret, and native undo; CRLF/CR becomes editor LF. Literal
+  HTML remains text: only escaped text and generated line breaks are inserted.
 - While bytes are being transferred, the textarea is read-only and exposes
   `aria-busy="true"`; the send and autocomplete controls are disabled.
 - Electron main saves bounded bytes under the originating session's scratch

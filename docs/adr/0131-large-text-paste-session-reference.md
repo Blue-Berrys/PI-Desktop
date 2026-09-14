@@ -36,8 +36,10 @@ existing `@path` file semantics.
    restoration, and is removed when the token is removed from the text. Session
    scratch lifecycle and cleanup remain the existing host-owned behavior.
 5. Clipboard files and images keep their existing compact chip and structured
-   attachment flow. This decision changes only text-only pastes above the
-   configured threshold.
+   attachment flow after representation selection under ADR 0059. Its #138
+   amendment selects text when Word supplies text plus generated image copies;
+   that text uses this same threshold, while native files and image-only pastes
+   keep the attachment flow.
 
 ## Consequences
 

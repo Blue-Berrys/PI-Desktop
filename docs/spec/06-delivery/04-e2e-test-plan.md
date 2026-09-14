@@ -122,6 +122,7 @@ The minimum selection is:
   `pnpm test:e2e:boot`.
 - Session-list refresh or model capability lookup: `pnpm test:e2e` and
   `pnpm test:e2e:boot`, including the synthetic large-list responsiveness check.
+- Composer clipboard representation and text insertion: `pnpm test:e2e:composer-paste`.
 - Transcript render boundaries and cross-part delegation display: `pnpm test:e2e:transcript`.
 - Plan host/runtime behavior: `pnpm test:e2e` and `pnpm test:e2e:plan`.
 - Plan UI behavior: `pnpm test:e2e:plan` and `pnpm test:e2e:plan-ui`.
@@ -5788,8 +5789,14 @@ and identify the platform validation still needed.
   (including a filename with whitespace), and an image in separate paste
   attempts. Record the app data directory and the session id.
 - **Steps**:
-  1. Paste text-only within the configured threshold and confirm the text is
-     inserted by the native textarea path.
+  1. Paste text-only within the configured threshold and confirm editable text.
+     Copy a Word selection with text plus a generated image representation;
+     confirm text wins, including multiline/CRLF, blank/trailing lines, literal
+     `<>&` and quotes, replacing selections across line breaks/attachment chips,
+     caret position, and native undo/redo.
+     Repeat above the threshold and confirm a TXT chip rather than an image.
+     Paste a real native image file with accompanying filename text and confirm
+     it remains an image attachment.
   2. Paste one local file, then paste multiple files including a spaced name.
   3. Paste an image from the OS screenshot/clipboard provider.
   4. Inspect the draft before sending: confirm each materialized item is a
@@ -5822,8 +5829,15 @@ and identify the platform validation still needed.
 - **Acceptance**: C (conversation & stream), E (tools & permissions),
   F (persistence), Quality
 - **Milestone**: M5
-- **Status**: Unit-covered (`apps/desktop/test/composer-paste-files.test.mjs`);
-  full UI journey Draft (run only in a capable environment when this surface changes)
+- **Status**: Unit-covered (`composer-paste-files.test.mjs`,
+  `composer-clipboard.test.mjs`); `pnpm test:e2e:composer-paste` mounts the real
+  ComposerInput, draft/paste hooks, production CSS and sandboxed preload. It
+  dispatches Chromium ClipboardEvents with synthetic mixed data and native File
+  objects, exercises the real scratch writer and compares saved bytes. Requires
+  a desktop build, installed Electron and a graphical session (Xvfb on Linux).
+  It does not modify the OS clipboard or automate Word; Word/platform journeys
+  and full provider dispatch remain manual. Branch runs are pre-merge evidence;
+  rerun from integrated main under the post-integration E2E policy.
 
 #### E2E-102h: Composer picker imports files into session scratch
 

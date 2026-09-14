@@ -809,7 +809,11 @@ places the caret after the inserted content. A failed or unsupported read keeps
 the chip in place. The renderer resolves any remaining sentinel references
 exactly once immediately before dispatch. The threshold is an AI → Defaults
 setting, defaults to 600 characters, and applies only to text-only pastes;
-clipboard files and images retain their chip presentation.
+clipboard files and images retain their chip presentation. Word's mixed
+`text/plain` plus generated `image/*` copies selects the text representation
+when the text is not whitespace-only and no file has a native path. That text
+uses the same threshold. Native files, non-image files, and image-only or
+whitespace-plus-image pastes retain their chips.
 
 ## 8.2 Composer runtime controls
 

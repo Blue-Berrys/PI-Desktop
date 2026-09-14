@@ -2451,6 +2451,11 @@ reasoning-level control.
 
 ### 11.7 MVP constraints
 
+- Clipboard representation selection precedes the rules below: non-whitespace
+  `text/plain` takes precedence over accompanying `image/*` copies only when
+  all files lack native paths. This keeps Word text editable. Native files,
+  any non-image file, and image-only/whitespace-plus-image pastes remain
+  attachments. Selected text uses the same large-paste threshold (ADR 0059).
 - Pasting one or more OS clipboard files or images saves their bytes into the
   originating session's scratch directory and adds a compact leaf-name
   reference above the textarea. A text-only paste at or below the configured
@@ -2541,8 +2546,8 @@ Anatomy:
   restores that snapshot in its original reference order instead of copying
   serialized message paths back into the textarea. Stop after reply start does
   not restore or duplicate the submitted draft.
-- A paste containing files is intercepted only when the clipboard exposes at
-  least one `File`. The renderer transfers bounded file bytes, name, and MIME
+- After the representation selection in §11.7, a file paste requires at least
+  one `File`. The renderer transfers bounded file bytes, name, and MIME
   metadata to Electron main with the durable session id. Main validates the
   session, writes unique sanitized files under
   `<data_dir>/scratch/<sessionId>/pasted/`, and returns each UUID-backed

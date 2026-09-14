@@ -17,8 +17,15 @@ ownership rules.
 
 ## Decision
 
-1. The renderer intercepts paste only when the clipboard contains one or more
-   `File` objects. Text-only paste remains native textarea behavior.
+1. The renderer materializes clipboard `File` objects through the attachment
+   flow. Amendment (2026-09-14, #138): when non-whitespace `text/plain` accompanies
+   only `image/*` files without native filesystem paths, prefer the editable text
+   representation (Word can supply an image of the same selection). Any native
+   file path, any non-image file, or absent/whitespace-only text preserves the
+   file/image flow. Selected text follows ADR 0131's existing large-paste
+   threshold. Short multiline text is escaped before native insertion as text
+   and line breaks, preserving paragraphs, selection, and undo without accepting
+   clipboard HTML. CRLF/CR line endings become editor LF line breaks.
 2. The renderer transfers bounded file bytes plus the browser-provided name and
    MIME type to Electron main through `composer/pasteFiles`, together with the
    durable session id. A home composer creates or reuses a session before the

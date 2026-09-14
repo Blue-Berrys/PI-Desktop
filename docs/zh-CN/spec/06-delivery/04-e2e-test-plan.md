@@ -105,6 +105,7 @@ unit/integration 测试；代码 pull request 使用有选择且高价值的 E2E
 - Electron 启动、preload 或窗口生命周期：`pnpm test:e2e` 和 `pnpm test:e2e:boot`。
 - 会话列表刷新或模型能力查询：`pnpm test:e2e` 和 `pnpm test:e2e:boot`，
   包括合成大列表的响应性检查。
+- 输入框剪贴板表示与文本插入：`pnpm test:e2e:composer-paste`。
 - 聊天记录渲染边界和跨活动段委派显示：`pnpm test:e2e:transcript`。
 - Plan host/runtime：`pnpm test:e2e` 和 `pnpm test:e2e:plan`。
 - Plan UI：`pnpm test:e2e:plan` 和 `pnpm test:e2e:plan-ui`。
@@ -4286,7 +4287,10 @@ IPC 请求无法关闭。
   可用的家庭输入框。操作系统剪贴板包含不超过大段粘贴阈值的文本片段、一个或
   更多本地文件（包括带空格的文件名）和图像，分别进行粘贴尝试。记录应用程序数据目录和会话 ID。
 - **步骤**：
-  1. 粘贴不超过配置阈值的纯文本，并确认文本是由原生文本区域路径插入的。
+  1. 粘贴阈值内的纯文本，确认可编辑。复制同时带正文和生成图片副本的 Word
+     选区，确认正文优先；覆盖多行/CRLF、空行与末尾换行、字面量 `<>&` 及引号、
+     跨换行/附件芯片替换选区、光标与原生撤销/重做。超过阈值时应生成 TXT 芯片而非图片。
+     粘贴带文件名文字的真实图片文件，确认仍为图片附件。
   2. 粘贴一个本地文件，然后粘贴包含空格名称的多个文件。
   3. 粘贴来自操作系统 screenshot/clipboard 提供程序的图像。
   4.发送前检查草稿：确认每个物化项目都是
@@ -4316,8 +4320,13 @@ IPC 请求无法关闭。
 - **接受**：C（对话和流），E（工具和权限），
   F（坚持），品质
 - **里程碑**：M5
-- **状态**：单位覆盖（`apps/desktop/test/composer-paste-files.test.mjs`）；
-  完整的 UI 旅程草案（适用变更合入前需在具备条件的环境中运行 E2E）
+- **状态**：单元覆盖（`composer-paste-files.test.mjs`、`composer-clipboard.test.mjs`）；
+  `pnpm test:e2e:composer-paste` 挂载真实 ComposerInput、草稿/粘贴 hook、生产 CSS
+  和沙盒 preload，以 Chromium ClipboardEvent 注入混合数据与原生 File，并调用
+  真实临时文件写入器核对字节。需先构建桌面、安装 Electron，并有图形会话
+  （Linux 可用 Xvfb）。测试不修改系统剪贴板，也不操作 Word；Word/各平台旅程
+  及完整提供商发送仍需人工验证。分支运行仅为合入前证据；合入后须按规定从
+  集成后的 main 重新运行。
 
 #### E2E-102a：Composer 文件引用结果使用紧凑的叶名称
 
