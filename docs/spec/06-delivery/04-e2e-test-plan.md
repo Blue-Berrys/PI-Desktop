@@ -11246,6 +11246,34 @@ are withdrawn with ADR 0165.
   automated. The live multi-session provider/Electron journey remains runner
   validation under the no-local-E2E policy
 
+#### E2E-SESSION-completion-notice-allows-silence: A trusted completion notice may finish without an acknowledgement
+
+- **Preconditions**: A candidate commit has its own built host-core and runtime
+  sidecar. The local SSE provider deterministically returns visible text or a
+  successful empty response; no live credentials are required.
+- **Steps**: 1) Deliver a task through the real Host collaboration ledger and
+  sidecar, read its successful result, and complete the coordinator summary.
+  2) Resolve the queued completion callback through the production Main input
+  resolver and run the recipient against an empty SSE response. 3) Run another
+  human request, copied completion framing, a ledger task, and a ledger message
+  against empty responses on the same recipient runtime.
+- **Expected**: The original result remains unchanged. The completion has one
+  provider request, no error, one terminal lifecycle, completed ledger status,
+  and no acknowledgement callback. Each ordinary input still retries once and
+  ends with `EMPTY_MODEL_RESPONSE`. Unit coverage additionally rejects missing
+  reply-to IDs/wrong targets and revokes the exception on accepted user steering.
+- **Specs linked**: `03-runtime/02-agent-runtime.md` §5e,
+  `03-runtime/08-error-codes.md`, ADR 0239
+- **Acceptance**: C (conversation & stream), D (provenance), Quality
+- **Milestone**: M6+
+- **Status**: Automated by `pnpm test:e2e:session-completion` on the committed,
+  rebased candidate in its dedicated worktree. The harness drives real Host
+  RPCs, the production provenance resolver, sidecar, and local SSE, and persists
+  runtime messages before Host settlement. It does not exercise Electron's
+  queue/outbox UI or a live provider. Candidate/base SHAs and results belong in
+  the validation report; existing ledger coverage runs separately through
+  `pnpm test:e2e:collaboration`.
+
 #### E2E-SESSION-hover-card-model-and-links: Session hover cards expose readable model and creation navigation
 
 - **Preconditions**: The app has one collaboration-created session, one

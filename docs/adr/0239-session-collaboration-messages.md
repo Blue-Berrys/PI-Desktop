@@ -42,6 +42,16 @@ authorization and do not participate in user-message editing or regeneration.
 A requested completion callback produces at most one durable completion message
 to the originating session. It references the original delivery and the actual
 turn outcome. Completion messages never request another automatic callback.
+A completion notice may need no acknowledgement. Its current recipient turn
+may therefore complete with no visible assistant text, without silent-turn
+recovery or `EMPTY_MODEL_RESPONSE`. This exception uses only provenance resolved
+by Main from the queued Host ledger record, with matching target and nonempty
+message/reply-to IDs. Plugin/model text and restored history cannot enable it.
+Every new run resets the exception, and accepted user steering revokes it.
+Provider errors and aborts remain errors/aborts; task and ordinary message
+requests retain silent-turn recovery. No new protocol field or caller authority
+is introduced.
+
 The host bounds autonomous communication chains and retains delivery failures for
 passive inspection. Cancellation preserves the session and its history.
 

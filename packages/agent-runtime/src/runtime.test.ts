@@ -2879,6 +2879,94 @@ describe("DesktopAgentRuntime thinking configuration", () => {
 });
 
 describe("DesktopAgentRuntime session collaboration provenance", () => {
+  it.each([
+    { content: [] },
+    { content: [{ type: "text", text: " \n " }] },
+    { content: [{ type: "thinking", thinking: "Already handled." }] },
+  ])(
+    "accepts a silent completion notice without exempting the following human prompt (%j)", async ({ content }) => {
+    const onEvent = vi.fn();
+    const runtime = createRuntime({ onEvent });
+    const agent = (runtime as any).agent;
+    const handle = (runtime as any).handleAgentEvent.bind(runtime);
+    const silent = assistantMessage({ content });
+    const respond = async () => {
+      await handle({ type: "agent_start" });
+      await handle({ type: "message_start", message: silent });
+      await handle({ type: "message_end", message: silent });
+      await handle({ type: "turn_end" });
+      await handle({ type: "agent_end", messages: [] });
+    };
+    agent.prompt = vi.fn(respond);
+    agent.continue = vi.fn(respond);
+    agent.waitForIdle = vi.fn(async () => undefined);
+    try {
+      await runtime.prompt({ text: "Task completed", sessionMessage: {
+        messageId: "completion-1", sourceSessionId: "sender", sourceTitle: "Worker",
+        targetSessionId: "session-1", kind: "completion", replyToMessageId: "task-1",
+      } }, "notice-user", "notice-turn");
+      expect(agent.continue).not.toHaveBeenCalled();
+      const notices = onEvent.mock.calls.map(([envelope]) => (envelope as AgentEventEnvelope).event);
+      expect(notices.filter((event) => event.type === "agent_end")).toHaveLength(1);
+      expect(notices.some((event) => event.type === "error")).toBe(false);
+      expect(notices).toContainEqual(expect.objectContaining({
+        type: "message_end", message: expect.objectContaining({ status: "complete" }),
+      }));
+      onEvent.mockClear();
+      await runtime.prompt("Please answer", "human-user", "human-turn");
+      expect(agent.continue).toHaveBeenCalledOnce();
+      expect(onEvent.mock.calls.map(([envelope]) => (envelope as AgentEventEnvelope).event)).toContainEqual(
+        expect.objectContaining({ type: "error", error: expect.objectContaining({ code: "EMPTY_MODEL_RESPONSE" }) }),
+      );
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
+  it.each(["task", "message", "wrong-session", "unlinked", "text-only", "steered"])(
+    "retains empty-response recovery for %s input", async (kind) => {
+      const onEvent = vi.fn();
+      const runtime = createRuntime({ onEvent });
+      const agent = (runtime as any).agent;
+      const handle = (runtime as any).handleAgentEvent.bind(runtime);
+      const silent = assistantMessage({ content: [] });
+      const respond = async () => {
+        await handle({ type: "agent_start" });
+        await handle({ type: "message_start", message: silent });
+        await handle({ type: "message_end", message: silent });
+        await handle({ type: "turn_end" });
+        await handle({ type: "agent_end", messages: [] });
+      };
+      agent.prompt = vi.fn(async () => {
+        if (kind === "steered") {
+          agent.state.isStreaming = true;
+          runtime.steer({ text: "Please answer now" }, "notice-turn", {
+            id: "steering", role: "user", content: "Please answer now",
+            status: "complete", createdAt: new Date().toISOString(),
+          });
+          agent.state.isStreaming = false;
+        }
+        await respond();
+      });
+      agent.continue = vi.fn(respond);
+      agent.waitForIdle = vi.fn(async () => undefined);
+      const origin: SessionMessageOrigin = {
+        messageId: "completion-1", sourceSessionId: "sender", sourceTitle: "Worker",
+        targetSessionId: kind === "wrong-session" ? "other-session" : "session-1",
+        kind: kind === "task" || kind === "message" ? kind : "completion",
+        ...(kind !== "unlinked" ? { replyToMessageId: "task-1" } : {}),
+      };
+      try {
+        await runtime.prompt(kind === "text-only" ? formatSessionMessage("Task completed", origin)
+          : { text: "Task completed", sessionMessage: origin }, "user", "notice-turn");
+        expect(agent.continue).toHaveBeenCalledOnce();
+        expect(onEvent.mock.calls.map(([envelope]) => (envelope as AgentEventEnvelope).event)).toContainEqual(
+          expect.objectContaining({ type: "error", error: expect.objectContaining({ code: "EMPTY_MODEL_RESPONSE" }) }),
+        );
+      } finally { await runtime.dispose(); }
+    },
+  );
+
   it("frames live input and restored history identically without changing human input", async () => {
     const origin: SessionMessageOrigin = {
       messageId: "delivery-1", sourceSessionId: "sender", sourceTitle: "Coordinator",

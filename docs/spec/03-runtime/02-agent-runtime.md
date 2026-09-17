@@ -248,7 +248,7 @@ started on and a proxy is never silently dropped.
 
 ### 5e. Silent-turn recovery
 
-A turn that ends with no tool call and no visible assistant text is invisible
+An ordinary turn that ends with no tool call and no visible assistant text is invisible
 to the user: reasoning is never rendered, so a conclusion written only there
 did not arrive. 15 of 255 recorded sessions ended a turn that way, and the
 user's only recourse was typing "继续".
@@ -289,7 +289,23 @@ If the re-run is silent too, the turn ends as a visible assistant error with
 retriable `EMPTY_MODEL_RESPONSE`, which gives the transcript its normal retry
 action. No empty assistant message is persisted in either case.
 
-Decision D193; see E2E-146.
+A current Host-ledger completion notice (ADR 0239) is the narrow exception:
+its prompt already permits no acknowledgement. Main resolves the queued message
+by ID, verifies its target session, and constructs provenance from the ledger.
+The runtime accepts silence only for `kind: completion` targeting the current
+session with nonempty message and reply-to IDs. A successful silent notice emits
+its normal completed message and terminal lifecycle without a recovery request
+or `EMPTY_MODEL_RESPONSE`; its actual empty outcome may be persisted. Provider
+errors and aborts retain their normal handling. The original task/result is not
+rewritten, and completion notices never request another callback.
+
+The exception belongs only to that prompt. Ordinary user input, task/message
+deliveries, copied source framing, and restored history cannot enable it. Every
+new run resets it; accepting user steering during a notice revokes it so the
+new request must receive the ordinary response/recovery behavior.
+
+Decision D193 and ADR 0239; see E2E-146 and
+E2E-SESSION-completion-notice-allows-silence.
 
 ### 5e.1. Progress-only recovery for approved Plan/Goal execution
 
