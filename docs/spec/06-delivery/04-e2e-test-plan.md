@@ -1963,6 +1963,32 @@ identify the platform validation still needed.
 
 ### Session Persistence
 
+#### E2E-MCP-windows-npm-literal-argv: Windows npm shims launch MCP without a shell
+
+- **Preconditions**: A portable Node installation whose directory contains
+  spaces and shell metacharacters, a standard npm/npx shim, and a local npm CLI
+  fixture that speaks MCP. No registry, live server, or credentials are needed.
+- **Steps**: 1) Connect an MCP server using bare `npx` with the installation on
+  its declared PATH. 2) Call the fixture tool to read its argv. 3) Repeat with a
+  separate npm prefix and Node elsewhere on the same PATH. 4) Check explicit
+  shim paths, absent installation files, native executable precedence, and the
+  existing selected-npm executable flow.
+- **Expected**: The real child completes initialize/tools/list/tools/call. The
+  launch is `node.exe npx-cli.js` with `shell: false`; paths with spaces work,
+  shell metacharacters arrive literally, and the restricted environment is
+  preserved. Missing files do not trigger shell fallback. POSIX commands remain
+  unchanged, and the npm picker shares the same installed-CLI mapping.
+- **Specs linked**: `07-plugins/04-plugin-security.md` §8.1, ADR 0038, ADR 0244
+- **Acceptance**: D (literal arguments and environment), G (MCP), Quality
+- **Milestone**: M6+
+- **Status**: Automated process/transport coverage in
+  `apps/desktop/test/plugin-mcp-windows.test.mjs`; run with `node --test` together
+  with `plugin-mcp.test.mjs` and `npm-executable.test.mjs`. On non-Windows hosts,
+  the test selects the Windows resolution branch and uses a real Node binary
+  named `node.exe` in the fixture layout. This proves resolution and protocol
+  behavior, not native Windows CreateProcess or packaged portable-app acceptance.
+  The latter remains a Windows runner/manual validation step.
+
 #### E2E-020: Session survives restart
 
 - **Preconditions**: Session with message history exists.

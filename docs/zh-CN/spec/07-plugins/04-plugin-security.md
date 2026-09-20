@@ -275,6 +275,13 @@ MCP 服务器是 `net.fetch` 旁边的第二个出口路径，因此它是声明
   `TMP`、`TMPDIR`、`LANG`、`HOME`、`USER`、`USERPROFILE`。身份变量要透传，
   是因为子进程是第三方代码，用 `$HOME` 解析 `~` 而不是调用 `os.homedir()`
   （issue #717）；provider key 和其它宿主状态仍然不会穿越。
+- Windows 上标准的 `npm.cmd` / `npx.cmd`（以及 `.bat`）通过安装目录中的
+  `node.exe` 与 `node_modules/npm/bin/{npm,npx}-cli.js` 启动，不经过 shell。
+  裸 npm/npx 名称只在最终受限子进程 PATH 中查找；同目录的原生 `.com` / `.exe`
+  优先。优先使用 shim 旁的 Node；独立 npm 前缀可使用同一子进程 PATH 中的 Node。
+  显式路径先经过既有 trusted/confined 策略。安装文件缺失时失败，不退回 shell
+  或切换其他安装。其他命令及平台维持直接启动；空格和 shell 特殊字符仍是字面
+  参数，不额外继承宿主环境。
 - `transport: "http"` 到达远程端点 (`mcp.server.remote`)。`url` 可以使用
   `http` 或 `https`；非回环 HTTP 不加密，只应在可信网络中使用。插件端点还
   必须被 `manifest.net.domains` 覆盖。工具参数会离开机器，这就是为什么权限

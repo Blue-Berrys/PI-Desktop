@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { accessSync, constants, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, extname, isAbsolute, join } from "node:path";
+import { windowsNpmCliLaunch } from "./npm-cli-launch.ts";
 
 /** Injectable so installer tests never run npm. */
 export type DependencyCommandRunner = (
@@ -160,12 +161,10 @@ export async function prepareNpmExecutable(
       if (process.platform === "win32") {
         const extension = extname(npmPath).toLowerCase();
         if (extension === ".cmd" || extension === ".bat") {
-          node = join(directory, "node.exe");
-          const cli = join(directory, "node_modules", "npm", "bin", "npm-cli.js");
-          requireFile(node, true);
-          requireFile(cli, false);
-          tool.command = node;
-          tool.args = [cli];
+          const launch = windowsNpmCliLaunch(npmPath, "npm");
+          node = launch.command;
+          tool.command = launch.command;
+          tool.args = launch.args;
         } else if (extension !== ".exe") {
           throw new Error("Select npm.cmd beside node.exe and node_modules/npm, or an npm .exe");
         }

@@ -959,6 +959,26 @@ unit/integration 测试；代码 pull request 使用有选择且高价值的 E2E
 
 ### 会话持续性
 
+#### E2E-MCP-windows-npm-literal-argv：Windows npm shim 无 shell 启动 MCP
+
+- **前提**：便携 Node 安装目录含空格及 shell 特殊字符，具有标准 npm/npx shim，
+  本地 npm CLI 夹具实现 MCP；无需注册表、真实服务或凭证。
+- **步骤**：1）把安装目录放在 MCP 声明的 PATH，以裸 `npx` 连接。2）调用夹具
+  工具读取 argv。3）将 npm 前缀与 Node 分开、但放在同一 PATH，重复连接。
+  4）检查显式 shim 路径、安装文件缺失、原生可执行文件优先级及现有 npm 选择器。
+- **预期**：真实子进程完成 initialize/tools/list/tools/call；以
+  `node.exe npx-cli.js` 和 `shell: false` 启动，含空格路径可用，shell 特殊字符
+  作为字面参数到达，受限环境保持不变。缺少文件不会触发 shell 回退。POSIX
+  命令不变，npm 选择器复用同一安装目录 CLI 映射。
+- **关联规格**：`07-plugins/04-plugin-security.md` §8.1、ADR 0038、ADR 0244
+- **验收**：D（字面参数及环境）、G（MCP）、质量
+- **里程碑**：M6+
+- **状态**：`apps/desktop/test/plugin-mcp-windows.test.mjs` 自动覆盖进程及传输；
+  与 `plugin-mcp.test.mjs`、`npm-executable.test.mjs` 一起用 `node --test` 运行。
+  非 Windows 主机选择 Windows 解析分支，并在夹具目录中以 `node.exe` 名称
+  启动真实 Node。这证明解析及协议行为，不代表 Windows CreateProcess 或便携
+  打包应用验收；后两项仍需 Windows runner 或人工验证。
+
 #### E2E-020：会话在重新启动后仍然存在
 
 - **先决条件**：存在具有消息历史记录的会话。

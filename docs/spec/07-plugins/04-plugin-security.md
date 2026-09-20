@@ -354,6 +354,16 @@ manifest did not name:
   third-party code that resolves `~` through `$HOME` rather than calling
   `os.homedir()` (issue #717); provider keys and other host state still never
   cross.
+- On Windows, standard `npm.cmd` / `npx.cmd` (and `.bat`) launch through
+  the installed `node.exe` and `node_modules/npm/bin/{npm,npx}-cli.js`, never
+  through a shell. Bare npm/npx names are resolved against the final restricted
+  child PATH; a native `.com` / `.exe` retains precedence within each directory.
+  Node beside the shim is preferred, with Node from that same child PATH as the
+  fallback for a separate npm prefix. Explicit commands still pass the existing
+  trusted/confined path policy first. Missing installation files fail rather
+  than invoking a shell or changing installations. Other commands/platforms
+  keep direct spawning. Arguments remain literal, including spaces and shell
+  metacharacters; no additional host environment is inherited.
 - `transport: "http"` reaches a remote endpoint (`mcp.server.remote`). The `url`
   may use `http` or `https`; non-loopback HTTP is unencrypted and should only be
   used on a trusted network. Plugin endpoints must also be covered by

@@ -3,6 +3,7 @@ import { isAbsolute, resolve, sep } from "node:path";
 import type { PluginMcpServerContrib } from "@pi-desktop/plugin-sdk";
 import { minimalChildEnv } from "./child-process-env.ts";
 import { userLookupPath } from "./user-login-path.ts";
+import { resolveMcpNpmLaunch } from "./npm-cli-launch.ts";
 
 /** MCP revision we advertise during the handshake. */
 export const MCP_PROTOCOL_VERSION = "2025-06-18";
@@ -138,9 +139,13 @@ function createStdioTransport(
   handlers: McpTransportHandlers,
 ): McpTransport {
   const spawnImpl = options.spawnImpl ?? nodeSpawn;
-  const child: ChildProcess = spawnImpl(
+  const launch = resolveMcpNpmLaunch(
     resolveMcpCommand(options.rootPath, options.command, options.commandPolicy),
-    options.args,
+    options.env,
+  );
+  const child: ChildProcess = spawnImpl(
+    launch.command,
+    [...launch.args, ...options.args],
     {
       cwd: options.rootPath,
       env: options.env,
