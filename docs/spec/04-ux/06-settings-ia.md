@@ -579,6 +579,25 @@ system while preserving their different data ownership:
   labels. The skills kind carries the import mode (copy or symlink); the MCP
   kind writes into the same MCP list the MCP destination manages.
 
+- OpenCode session discovery reads `opencode.db` below the absolute
+  `XDG_DATA_HOME/opencode` root, or `~/.local/share/opencode` when XDG is absent
+  or relative. It also retains the legacy `storage/session`, `message`, and
+  `part` JSON layout. A session present in both stores appears once, using the
+  database copy. Empty sessions are not offered.
+- SQLite is an external, read-only source: no migrations, writes, recovery or
+  checkpoints. Read transactions include committed WAL content and bound lock
+  waits to 250 ms. Missing, locked, damaged or incompatible databases do not
+  prevent the legacy JSON scan. Conversion errors fail that selected session
+  before any host import; they never silently persist a partial transcript.
+- The supported SQLite schema is OpenCode v1's `session`, `message` and `part`
+  tables, verified against v1.18.26 (`774cc7c`). Sessions and messages are read
+  in complete keyset pages; messages follow `(time_created, id)` and parts
+  follow `id`. Source IDs, timestamps, project directory and assistant model
+  metadata retain the existing import semantics. Visible, non-synthetic text
+  and tool input/output/error parts use the existing converter; reasoning,
+  attachments and structural parts remain outside its content scope. This
+  does not import the separate v2 `session_message` projection.
+
 ### Project archive
 - Reuses the durable Projects index as a settings-scale management surface
 - Always includes archived records; archived rows are grouped, never hidden, so

@@ -13854,3 +13854,28 @@ the latest destination. These assertions measure work counts, not device FPS.
 - **Automation:** `pnpm test:e2e:dialog-overflow`; source/contract dialog suites
   supplement, but do not replace, real Chromium geometry and pointer checks.
 - **Status:** Implemented. Native Windows evidence; macOS/Linux not qualified.
+
+### E2E-IMPORT-opencode-sqlite
+
+- **Source contract:** OpenCode v1.18.26, commit
+  `774cc7c1914e4329eefde5a669f938b0cf566661`:
+  [schema](https://github.com/anomalyco/opencode/blob/774cc7c1914e4329eefde5a669f938b0cf566661/packages/core/src/session/sql.ts)
+  and [v1 reader](https://github.com/anomalyco/opencode/blob/774cc7c1914e4329eefde5a669f938b0cf566661/packages/opencode/src/session/message-v2.ts).
+- **Preconditions:** Isolated temporary source root and real SQLite fixtures;
+  no developer/user agent databases or provider credentials.
+- **Steps:** Scan a DB-only store, select and convert its session. Repeat with
+  absolute XDG discovery, surviving JSON copies, over 256 sessions, over 512
+  messages with tied timestamps, reverse-inserted parts, assistant model
+  metadata and successful/failed tools. Scan while a WAL writer has committed
+  and uncommitted data. Repeat with missing, locked, corrupt or incomplete
+  databases; delete/corrupt a selected session before conversion.
+- **Expected:** DB-only sessions are discovered; current database copies win
+  duplicate IDs, JSON-only sessions remain importable, pages lose no rows,
+  message/part traversal follows the v1 contract, and source DB/WAL bytes do not
+  change. Cross-session parts never leak. Conversion of malformed/removed
+  records fails without a partial import; legacy scans survive SQLite errors.
+  IDs containing path separators are rejected. Reasoning/attachments and the
+  v2 `session_message` projection retain the documented unsupported boundary.
+- **Automation:** `node --test apps/desktop/test/importer-opencode.test.mjs`
+  exercises the production importer service with real filesystem/SQLite
+  boundaries. It does not claim native Windows or the full Electron UI flow.

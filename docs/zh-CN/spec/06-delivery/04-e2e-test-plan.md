@@ -8158,3 +8158,25 @@ the latest destination. These assertions measure work counts, not device FPS.
 - **阶段：** 发布后维护。
 - **自动化：** `pnpm test:e2e:dialog-overflow`；源代码检查不能替代实际布局验证。
 - **状态：** 已实现，原生 Windows 已验证，macOS/Linux 尚未实机验证。
+
+### E2E-IMPORT-opencode-sqlite
+
+- **来源契约：** OpenCode v1.18.26，提交
+  `774cc7c1914e4329eefde5a669f938b0cf566661`：
+  [数据库结构](https://github.com/anomalyco/opencode/blob/774cc7c1914e4329eefde5a669f938b0cf566661/packages/core/src/session/sql.ts)
+  和 [v1 读取器](https://github.com/anomalyco/opencode/blob/774cc7c1914e4329eefde5a669f938b0cf566661/packages/opencode/src/session/message-v2.ts)。
+- **前置条件：** 使用隔离的临时来源目录和真实 SQLite 测试数据，不读取开发者或
+  用户的智能体数据库，也不使用提供商凭据。
+- **步骤：** 扫描仅含数据库的存储，选择并转换其中的会话。依次覆盖绝对 XDG
+  路径、残留 JSON 副本、超过 256 个会话、超过 512 条且时间戳相同的消息、
+  逆序写入的部件、助手模型元数据，以及成功和失败的工具调用。在 WAL 写入方
+  同时存在已提交和未提交数据时执行扫描；再覆盖数据库缺失、被锁定、损坏或
+  结构不完整，以及选中后会话被删除或损坏的情况。
+- **预期：** 仅存于数据库的会话可以被发现；ID 重复时以当前数据库副本为准，
+  仅存于 JSON 的会话仍可导入，分页不丢失记录，消息和部件按 v1 契约遍历，
+  且来源 DB/WAL 字节不发生变化。其他会话的部件不得泄漏。记录损坏或被删除时
+  转换整体失败，不产生部分导入；SQLite 错误不阻断旧版扫描。含路径分隔符的
+  ID 会被拒绝。推理、附件和 v2 `session_message` 投影保持文档所述的不支持边界。
+- **自动化：** `node --test apps/desktop/test/importer-opencode.test.mjs`
+  使用真实文件系统和 SQLite 边界测试生产导入服务；不代表已完成 Windows
+  原生环境或完整 Electron UI 流程验证。
