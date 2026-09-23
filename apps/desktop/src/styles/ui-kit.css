@@ -346,7 +346,7 @@
   max-width: calc(100vw - 16px);
   padding: 4px;
   border: 1px solid var(--ds-border-subtle);
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   background: var(--ds-bg-elevated-opaque, var(--ds-bg-primary));
   box-shadow: var(--ds-shadow-dialog);
   color: var(--ds-text-primary);
@@ -358,7 +358,7 @@
 }
 
 .transcript-selection-action button {
-  border-radius: 999px;
+  border-radius: var(--radius-full);
   padding: 6px 10px;
   font-size: var(--text-sm-plus);
   white-space: nowrap;
