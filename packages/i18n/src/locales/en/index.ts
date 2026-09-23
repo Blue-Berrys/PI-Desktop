@@ -291,6 +291,8 @@ export const en = {
     copyFailed: "Couldn't copy to the clipboard",
     messageMenu: "Message actions",
     conversationMenu: "Conversation actions",
+    addToConversation: "Add to conversation",
+    addedToConversation: "Added to conversation",
     selectMessageText: "Select message text",
     copyConversation: "Copy conversation",
     selectConversationText: "Select conversation text",

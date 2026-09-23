@@ -39,7 +39,7 @@ export const MessageRow = memo(function MessageRow({
 }) {
   const { t } = useTranslation();
   const openTranscriptMenu = useTranscriptMenu();
-  const { copyText, selectText } = useChatTextActions();
+  const { copyText, selectText, addToConversation } = useChatTextActions();
   const editUserMessage = useAppStore((s) => s.editUserMessage);
   const activateMessageRevision = useAppStore((s) => s.activateMessageRevision);
   const deleteMessage = useAppStore((s) => s.deleteMessage);
@@ -108,7 +108,7 @@ export const MessageRow = memo(function MessageRow({
         revision: !editing && showRevisionPager
           ? { count: revisionCount, active: activeRevision }
           : null,
-        actions: { copyText, selectText },
+        actions: { copyText, selectText, addToConversation },
         onEdit: () => {
           setEditValue(editSeed);
           setEditing(true);

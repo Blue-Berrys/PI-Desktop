@@ -14,7 +14,21 @@ export type ComposerDraftSnapshot = {
 
 export type ComposerPrefill = ComposerDraftSnapshot & {
   sessionId: string;
+  /** Existing recovery paths replace the draft; transcript excerpts append. */
+  mode?: "replace" | "append";
 };
+
+/** Preserve the current draft verbatim while separating an inserted block. */
+export function appendComposerBlock(current: string, block: string): string {
+  if (!block) return current;
+  if (!current) return block;
+  const separator = current.endsWith("\n\n")
+    ? ""
+    : current.endsWith("\n")
+      ? "\n"
+      : "\n\n";
+  return `${current}${separator}${block}`;
+}
 
 type AbortMessage = {
   role: string;

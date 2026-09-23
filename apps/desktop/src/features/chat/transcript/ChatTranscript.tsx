@@ -90,7 +90,7 @@ function TranscriptBody({
 }: ChatTranscriptProps) {
   const { t } = useTranslation();
   const openTranscriptMenu = useTranscriptMenu();
-  const { copyText, selectText } = useChatTextActions();
+  const { copyText, selectText, addToConversation } = useChatTextActions();
   const showToast = useAppStore((state) => state.showToast);
   const transcriptRunning = isRunning && !readingWindow;
   const latestTurnResult = useAppStore((state) =>
@@ -209,7 +209,7 @@ function TranscriptBody({
         onCopyConversation: () => void copyConversation(),
         scrollRef,
         contentRef,
-        actions: { copyText, selectText },
+        actions: { copyText, selectText, addToConversation },
         onReturnToLatest: () => {
           onReturnToLatest?.();
           jumpToLatest();

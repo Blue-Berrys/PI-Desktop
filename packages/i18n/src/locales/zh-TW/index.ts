@@ -285,6 +285,8 @@ export const zhTW = {
     copyFailed: "複製到剪貼簿失敗",
     messageMenu: "訊息操作",
     conversationMenu: "對話操作",
+    addToConversation: "加入對話",
+    addedToConversation: "已加入對話",
     selectMessageText: "選取訊息文字",
     copyConversation: "複製整段對話",
     selectConversationText: "選取對話文字",

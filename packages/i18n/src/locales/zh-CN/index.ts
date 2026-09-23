@@ -285,6 +285,8 @@ export const zhCN = {
     copyFailed: "复制到剪贴板失败",
     messageMenu: "消息操作",
     conversationMenu: "对话操作",
+    addToConversation: "添加到会话",
+    addedToConversation: "已添加到会话",
     selectMessageText: "选中消息文本",
     copyConversation: "复制整个对话",
     selectConversationText: "选中对话文本",

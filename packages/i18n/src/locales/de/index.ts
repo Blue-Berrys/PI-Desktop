@@ -284,6 +284,8 @@ export const de = {
     "copyFailed": "Kopieren in die Zwischenablage fehlgeschlagen",
     "messageMenu": "Nachrichtenaktionen",
     "conversationMenu": "Gesprächsaktionen",
+    addToConversation: "Zur Unterhaltung hinzufügen",
+    addedToConversation: "Zur Unterhaltung hinzugefügt",
     "selectMessageText": "Nachrichtentext auswählen",
     "copyConversation": "Gespräch kopieren",
     "selectConversationText": "Gesprächstext auswählen",

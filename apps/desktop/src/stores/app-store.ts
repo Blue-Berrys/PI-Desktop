@@ -754,7 +754,15 @@ export const useAppStore = create<AppState>((set, get) => {
       sessionRuntime.isSessionSelectionPending(sessionId),
   }),
 
-
+  appendComposerText: (sessionId, text) =>
+    set({
+      composerPrefill: {
+        sessionId,
+        text,
+        fileReferences: [],
+        mode: "append",
+      },
+    }),
   clearComposerPrefill: () => set({ composerPrefill: null }),
   };
 });

@@ -48,13 +48,15 @@ let pastePending: Promise<unknown> | undefined;
 let submitted = 0;
 let rejectSubmission: () => Promise<void>;
 function Fixture({ sessionId, t, workspacePath }: { sessionId: string; t: TFunction; workspacePath: string }) {
+  const composerPrefill = useAppStore((state) => state.composerPrefill);
+  const clearComposerPrefill = useAppStore((state) => state.clearComposerPrefill);
   const draft = useComposerDraft({
     variant: "docked",
     activeSessionId: sessionId,
     workspacePath,
     sessions,
-    composerPrefill: null,
-    clearComposerPrefill: noop,
+    composerPrefill,
+    clearComposerPrefill,
     t,
     invalidatePromptEnhancement: noop,
     inputBlocked: false,
@@ -216,6 +218,57 @@ globalThis.composerPasteProbe = async () => {
       "changing workspace while the composer is unmounted must remove the previous workspace's chip");
     assert(controller.fileReferences.length === 1 && controller.fileReferences[0].path === references[1].path,
       "changing workspace must preserve scratch references");
+
+    // Transcript excerpts append to the active draft without replacing its
+    // text or attachments, and leave the caret ready for editing.
+    await reset("Keep this", 9, 9);
+    const retainedReference = createFileReference(
+      "/scratch/paste-a/retained.txt",
+      "retained.txt",
+      "paste-a",
+      { kind: "file" },
+    );
+    flushSync(() => controller.setFileReferences([retainedReference]));
+    flushSync(() =>
+      useAppStore.getState().appendComposerText(
+        "paste-a",
+        "> selected\n>\n> excerpt",
+      ),
+    );
+    await new Promise(requestAnimationFrame);
+    await new Promise(requestAnimationFrame);
+    const appended = "Keep this\n\n> selected\n>\n> excerpt";
+    assert(
+      readEditorValue(controller.ref.current!) === appended,
+      "transcript excerpt replaced or malformed the existing draft",
+    );
+    assert(
+      controller.fileReferences.length === 1 &&
+        controller.fileReferences[0].path === retainedReference.path,
+      "transcript excerpt removed an existing file reference",
+    );
+    assert(
+      editorSelectionRange(controller.ref.current!).start === appended.length,
+      "transcript excerpt did not focus the composer caret at the end",
+    );
+    render("paste-b");
+    await new Promise(requestAnimationFrame);
+    flushSync(() => controller.applyEditorDraft("Session B", [], 9));
+    flushSync(() =>
+      useAppStore.getState().appendComposerText("paste-a", "> stale excerpt"),
+    );
+    await new Promise(requestAnimationFrame);
+    assert(
+      readEditorValue(controller.ref.current!) === "Session B" &&
+        useAppStore.getState().composerPrefill === null,
+      "an excerpt queued for another session changed the active draft",
+    );
+    render("paste-a");
+    await new Promise(requestAnimationFrame);
+    assert(
+      !readEditorValue(controller.ref.current!).includes("stale excerpt"),
+      "a stale excerpt appeared after returning to its original session",
+    );
 
     // Keep the source attachment snapshot when a paste finishes in another session.
     await reset("keep \uE010 ", 7, 7);
@@ -817,6 +870,7 @@ globalThis.composerPasteProbe = async () => {
       imageZoomFocusAndRecovery: true,
       nativeMultipleFiles: true,
       selectionAndSessionDrafts: true,
+      transcriptExcerptAppend: true,
       workspaceReferencesAcrossRemount: true,
       pendingPasteAcrossSessionSwitch: true,
     };

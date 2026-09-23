@@ -1724,8 +1724,13 @@ Single message render — either user (plaintext) or assistant (markdown streami
   part of the message action toolbar: hidden by default and revealed together
   with Copy on row hover or keyboard focus. Right-clicking a user message or
   an assistant turn opens the same action vocabulary as a body-level
-  pointer-anchored menu (Copy, Select text, and the row's own Edit / Delete /
-  Regenerate / Branch / revision items). Right-clicking empty transcript
+  pointer-anchored menu (Copy, Add to conversation, Select text, and the row's
+  own Edit / Delete / Regenerate / Branch / revision items). Add to conversation
+  appends the captured selection as a Markdown quote to the active session's
+  composer, or quotes the whole speaking turn when the selection is collapsed
+  or outside the row. It preserves the existing draft and file references,
+  separates the quote with at least one blank line, focuses the composer at the end, and
+  never sends automatically. Right-clicking empty transcript
   space, a system row, or a permission/outcome card opens a conversation
   menu: Copy conversation, Select conversation text, Scroll to top, Jump to
   latest. Quote, Annotate, and Open side chat stay retired (ADR 0268). A
@@ -1867,10 +1872,10 @@ message its checkpoint covers.
   Home / End navigation, Escape / Tab / outside-press / scroll-behind
   dismissal, and an accessible name (`chat.messageMenu` or
   `chat.conversationMenu`). Focus returns to whatever the right-click
-  interrupted. While editing a user message, Copy uses the selected draft text
-  (or the whole draft if the caret is collapsed), and Select message text selects
-  the draft. Saved-message Edit, Delete, and revision actions are not offered
-  until editing ends.
+  interrupted. While editing a user message, Copy and Add to conversation use
+  the selected draft text (or the whole draft if the caret is collapsed), and
+  Select message text selects the draft. Saved-message Edit, Delete, and
+  revision actions are not offered until editing ends.
 
 ### 8.6 MVP constraints
 

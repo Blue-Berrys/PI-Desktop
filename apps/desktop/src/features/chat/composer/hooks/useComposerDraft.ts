@@ -14,7 +14,10 @@ import {
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../../../stores/app-store";
 import { api } from "../../../../lib/api";
-import type { ComposerDraftSnapshot } from "../../../../lib/composer-smart-stop";
+import {
+  appendComposerBlock,
+  type ComposerDraftSnapshot,
+} from "../../../../lib/composer-smart-stop";
 import {
   HOME_DRAFT_KEY,
   captureComposerDraft,
@@ -93,6 +96,7 @@ type UseComposerDraftOptions = {
     sessionId: string;
     text: string;
     fileReferences: ComposerDraftSnapshot["fileReferences"];
+    mode?: "replace" | "append";
   } | null;
   clearComposerPrefill: () => void;
   prefill?: ComposerPrefill | null;
@@ -458,16 +462,29 @@ export function useComposerDraft({
   }, [workspacePath]);
 
   useEffect(() => {
-    if (!composerPrefill || composerPrefill.sessionId !== activeSessionId) return;
-    setValue(composerPrefill.text);
-    setFileReferences((current) => [
-      ...current.filter(
-        (fileReference) => fileReference.sessionId !== composerPrefill.sessionId,
-      ),
-      ...composerPrefill.fileReferences.map((fileReference) =>
-        createFileReferenceFromSnapshot(fileReference, composerPrefill.sessionId),
-      ),
-    ]);
+    if (!composerPrefill) return;
+    if (composerPrefill.sessionId !== activeSessionId) {
+      if (composerPrefill.mode === "append") clearComposerPrefill();
+      return;
+    }
+    const nextValue =
+      composerPrefill.mode === "append"
+        ? appendComposerBlock(readLiveDraft(), composerPrefill.text)
+        : composerPrefill.text;
+    valueRef.current = nextValue;
+    pendingEditorCaretRef.current = nextValue.length;
+    setValue(nextValue);
+    setCursor(nextValue.length);
+    if (composerPrefill.mode !== "append") {
+      setFileReferences((current) => [
+        ...current.filter(
+          (fileReference) => fileReference.sessionId !== composerPrefill.sessionId,
+        ),
+        ...composerPrefill.fileReferences.map((fileReference) =>
+          createFileReferenceFromSnapshot(fileReference, composerPrefill.sessionId),
+        ),
+      ]);
+    }
     clearComposerPrefill();
     requestAnimationFrame(() => {
       const element = ref.current;

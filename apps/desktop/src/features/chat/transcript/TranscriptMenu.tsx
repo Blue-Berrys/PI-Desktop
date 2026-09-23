@@ -27,7 +27,10 @@ import {
   type ContextMenuRequest,
 } from "../../../components/ContextMenu";
 import { useAppStore } from "../../../stores/app-store";
-import { copySelectionOrFallback } from "../../../lib/chat-transcript-text";
+import {
+  copySelectionOrFallback,
+  quoteSelectionOrFallback,
+} from "../../../lib/chat-transcript-text";
 
 export type OpenTranscriptMenu = (
   event: ReactMouseEvent<HTMLElement>,
@@ -64,6 +67,8 @@ export function TranscriptMenuProvider({ children }: { children: ReactNode }) {
 export function useChatTextActions() {
   const { t } = useTranslation();
   const showToast = useAppStore((state) => state.showToast);
+  const activeSessionId = useAppStore((state) => state.activeSessionId);
+  const appendComposerText = useAppStore((state) => state.appendComposerText);
 
   const copyText = useCallback(
     async (text: string, selection?: string) => {
@@ -98,5 +103,16 @@ export function useChatTextActions() {
     selection.addRange(range);
   }, []);
 
-  return { copyText, selectText };
+  const addToConversation = useCallback(
+    (text: string, selection?: string) => {
+      if (!activeSessionId) return;
+      const quote = quoteSelectionOrFallback(selection, text);
+      if (!quote) return;
+      appendComposerText(activeSessionId, quote);
+      showToast(t("chat.addedToConversation"), { variant: "success" });
+    },
+    [activeSessionId, appendComposerText, showToast, t],
+  );
+
+  return { copyText, selectText, addToConversation };
 }

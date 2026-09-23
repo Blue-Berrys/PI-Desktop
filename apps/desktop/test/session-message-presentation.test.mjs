@@ -46,7 +46,11 @@ function loadComponent(name, extras = {}) {
     "./menu-items": { userMessageMenuItems: () => [] },
     "./TranscriptMenu": {
       useTranscriptMenu: () => () => {},
-      useChatTextActions: () => ({ copyText: () => {}, selectText: () => {} }),
+      useChatTextActions: () => ({
+        copyText: () => {},
+        addToConversation: () => {},
+        selectText: () => {},
+      }),
     },
     ...extras,
   };

@@ -284,6 +284,8 @@ export const fr = {
     "copyFailed": "Impossible de copier dans le presse-papiers",
     "messageMenu": "Actions du message",
     "conversationMenu": "Actions de la conversation",
+    addToConversation: "Ajouter à la conversation",
+    addedToConversation: "Ajouté à la conversation",
     "selectMessageText": "Sélectionner le texte du message",
     "copyConversation": "Copier la conversation",
     "selectConversationText": "Sélectionner le texte de la conversation",

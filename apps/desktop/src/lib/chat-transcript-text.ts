@@ -52,3 +52,19 @@ export function copySelectionOrFallback(
 ): string {
   return selection ? selection : fallback;
 }
+
+/**
+ * Turn a selected excerpt (or its whole-message fallback) into a Markdown
+ * quote that can be appended to the current composer draft.
+ */
+export function quoteSelectionOrFallback(
+  selection: string | undefined,
+  fallback: string,
+): string {
+  const excerpt = copySelectionOrFallback(selection, fallback).trim();
+  if (!excerpt) return "";
+  return excerpt
+    .split(/\r?\n/)
+    .map((line) => (line ? `> ${line}` : ">"))
+    .join("\n");
+}
