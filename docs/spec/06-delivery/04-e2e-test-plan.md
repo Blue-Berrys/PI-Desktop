@@ -12233,7 +12233,9 @@ are withdrawn with ADR 0165.
   While a worker is busy, send a follow-up to that exact Session ID and verify
   it is queued against the target inbox rather than starting a second turn. 5)
   Inspect status from the Agents panel and a sidebar hover card; confirm both
-  use bounded host projections and do not fetch a complete worker transcript.
+  use bounded host projections, the hover card marks currently running
+  created-session links, and neither surface fetches a complete worker
+  transcript.
   6) Wait for one worker, query `result` by its exact `messageId` and `turnId`,
   and inspect the parent transcript for one host-generated completion message.
   7) Re-read the result and repeat the settlement notification path; confirm
