@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useRef } from "react";
 import { createRoot } from "react-dom/client";
 import { flushSync } from "react-dom";
 import i18n from "i18next";
@@ -7,6 +7,7 @@ import { en } from "../../packages/i18n/src/index";
 import { MessageRow } from "../../apps/desktop/src/features/chat/transcript/MessageRow";
 import { TranscriptMenuProvider } from "../../apps/desktop/src/features/chat/transcript/TranscriptMenu";
 import { useAppStore } from "../../apps/desktop/src/stores/app-store";
+import { TranscriptSelectionAction } from "../../apps/desktop/src/features/chat/transcript/TranscriptSelectionAction";
 
 const check = (ok: boolean, label: string) => { if (!ok) throw new Error(label); };
 const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -24,6 +25,22 @@ const menu = async (node: HTMLElement) => {
   await settle();
 };
 
+function SelectionFixture() {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  return (
+    <>
+      <div className="thread-scroll" ref={scrollRef}>
+        <MessageRow message={{ id: "message", role: "user", content: "Original saved message", createdAt: "2026-09-21T00:00:00Z" }} isRunning={false} />
+        <div data-row-role="assistant" role="article">
+          <div className="assistant-turn-fragment"><div className="prose-chat">A second answer</div></div>
+          <div className="tool-output">Tool output is excluded</div>
+        </div>
+      </div>
+      <TranscriptSelectionAction scrollRef={scrollRef} sessionId="message-session" visible />
+    </>
+  );
+}
+
 Object.assign(globalThis, { messageEditCopyProbe: async () => {
   await i18n.init({ lng: "en", resources: { en: { translation: en } } });
   let copied = "";
@@ -34,8 +51,56 @@ Object.assign(globalThis, { messageEditCopyProbe: async () => {
   const root = createRoot(container);
   useAppStore.setState({ activeSessionId: "message-session", composerPrefill: null });
   flushSync(() => root.render(<I18nextProvider i18n={i18n}><TranscriptMenuProvider>
-    <MessageRow message={{ id: "message", role: "user", content: "Original saved message", createdAt: "2026-09-21T00:00:00Z" }} isRunning={false} />
+    <SelectionFixture />
   </TranscriptMenuProvider></I18nextProvider>));
+  const bubble = find(".message-bubble");
+  const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+  let textNode: Node | null = null;
+  while ((textNode = walker.nextNode())) {
+    if (textNode.textContent?.includes("Original saved message")) break;
+  }
+  check(!!textNode, "Could not find the rendered message text");
+  const range = document.createRange();
+  range.setStart(textNode!, 9);
+  range.setEnd(textNode!, 14);
+  const selection = window.getSelection()!;
+  selection.removeAllRanges();
+  selection.addRange(range);
+  await settle();
+  await settle();
+  check(!!document.querySelector('[data-selection-action="add-to-conversation"]'),
+    "Selecting message text did not reveal the inline action");
+  await click('[data-selection-action="add-to-conversation"]');
+  check(useAppStore.getState().composerPrefill?.text === "> saved",
+    "Inline action did not quote only the selected text");
+  selection.removeAllRanges();
+  await settle();
+  check(!document.querySelector('[data-selection-action="add-to-conversation"]'),
+    "Inline action remained after the selection was cleared");
+  const assistantText = find(".prose-chat").firstChild!;
+  range.setStart(assistantText, 2);
+  range.setEnd(assistantText, 8);
+  selection.addRange(range);
+  await settle();
+  await settle();
+  check(!!document.querySelector('[data-selection-action="add-to-conversation"]'),
+    "Selecting assistant prose did not reveal the inline action");
+  selection.removeAllRanges();
+  const toolText = find(".tool-output").firstChild!;
+  range.setStart(toolText, 0);
+  range.setEnd(toolText, 4);
+  selection.addRange(range);
+  await settle();
+  check(!document.querySelector('[data-selection-action="add-to-conversation"]'),
+    "Selecting tool output exposed the inline action");
+  selection.removeAllRanges();
+  range.setStart(textNode!, 0);
+  range.setEnd(assistantText, 4);
+  selection.addRange(range);
+  await settle();
+  check(!document.querySelector('[data-selection-action="add-to-conversation"]'),
+    "Selecting across turns exposed the inline action");
+  selection.removeAllRanges();
   await menu(find('[role="article"]'));
   await click('[data-context-menu-item="edit"]');
   const editor = find<HTMLTextAreaElement>("textarea");
@@ -74,5 +139,5 @@ Object.assign(globalThis, { messageEditCopyProbe: async () => {
   await click('[data-context-menu-item="copy"]');
   check(copied === "Original saved message", "Cancel changed the saved message");
   root.unmount();
-  return "PASS: selected text adds as a quote, partial draft copy, whole draft copy, select text, editing actions, cancel and saved-message copy";
+  return "PASS: selection action appears without a menu for speaking-turn text only, selected text adds as a quote, partial draft copy, whole draft copy, select text, editing actions, cancel and saved-message copy";
 } });

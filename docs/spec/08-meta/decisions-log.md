@@ -7006,3 +7006,13 @@ must keep splitting are covered by `markdown-blocks.test.mjs`.
   unmatched free-form IDs stay generic unknown, while published capabilities
   and explicit binding overrides retain their existing precedence. See
   `03-runtime/13-model-catalog-and-selection.md` §11.3.
+
+## 2026-09-23 — Selected transcript text can enter the draft directly (ADR 0306)
+
+- Issue #921 restores one small selection action after ADR 0268 removed the old
+  multi-action overlay. Selecting text inside one user message or assistant
+  answer shows Add to conversation beside the selection. It appends an editable
+  Markdown quote to the active session's composer without changing existing
+  draft text or file references. The right-click menu keeps a whole-turn
+  fallback. Annotations, side chats, and their retired identifiers remain
+  retired; no IPC or stored format changes.

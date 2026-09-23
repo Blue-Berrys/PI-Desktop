@@ -413,9 +413,13 @@ may be retained while exactly one workspace supplies the visible shell context.
   flipping, and close on outside press, Escape, Tab, window blur, or a
   scroll of anything behind them. An empty item list never opens a
   surface.
-- A speaking-turn context menu can append its captured text to the active
-  session composer. A non-collapsed selection inside that turn becomes a
-  line-by-line Markdown quote; otherwise the whole turn is quoted. The action
+- Selecting text inside one speaking turn's visible body shows a small
+  viewport-fixed Add to conversation control beside the selection. It does not
+  appear for tool output, thinking, the composer, or a selection crossing
+  turns; it closes when the selection clears, the transcript scrolls, the
+  window resizes, or the pane changes. The speaking-turn context menu offers
+  the same action, using the selected excerpt or the whole turn when no local
+  selection exists. The action makes a line-by-line Markdown quote and
   preserves the current session's draft and file references, ensures a blank
   line before the quote, focuses the composer after the inserted text, and does
   not submit it. The insertion is session-scoped and is never applied to a

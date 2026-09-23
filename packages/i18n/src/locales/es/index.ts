@@ -284,6 +284,7 @@ export const es = {
     "copyFailed": "No se pudo copiar al portapapeles",
     "messageMenu": "Acciones del mensaje",
     "conversationMenu": "Acciones de la conversación",
+    selectionActions: "Acciones del texto seleccionado",
     addToConversation: "Añadir a la conversación",
     addedToConversation: "Añadido a la conversación",
     "selectMessageText": "Seleccionar el texto del mensaje",

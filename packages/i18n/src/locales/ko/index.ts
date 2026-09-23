@@ -293,6 +293,7 @@ export const ko = {
     copyFailed: "클립보드에 복사하지 못했습니다",
     messageMenu: "메시지 작업",
     conversationMenu: "대화 작업",
+    selectionActions: "선택한 텍스트 작업",
     addToConversation: "대화에 추가",
     addedToConversation: "대화에 추가됨",
     selectMessageText: "메시지 텍스트 선택",

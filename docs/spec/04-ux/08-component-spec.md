@@ -1729,11 +1729,17 @@ Single message render — either user (plaintext) or assistant (markdown streami
   appends the captured selection as a Markdown quote to the active session's
   composer, or quotes the whole speaking turn when the selection is collapsed
   or outside the row. It preserves the existing draft and file references,
-  separates the quote with at least one blank line, focuses the composer at the end, and
-  never sends automatically. Right-clicking empty transcript
+  separates the quote with at least one blank line, focuses the composer at the
+  end, and never sends automatically. Selecting text inside one speaking turn
+  also shows a one-action floating control beside the selection, so this path
+  needs no right-click. The control does not appear for tool output, thinking,
+  the composer, or a selection crossing turns. It closes when the selection
+  clears, the transcript scrolls, the window resizes, or the pane changes
+  (ADR 0306). Right-clicking empty transcript
   space, a system row, or a permission/outcome card opens a conversation
   menu: Copy conversation, Select conversation text, Scroll to top, Jump to
-  latest. Quote, Annotate, and Open side chat stay retired (ADR 0268). A
+  latest. The old Quote, Annotate, and Open side chat actions stay retired
+  (ADR 0268). A
   streaming or empty assistant turn that would produce no items opens
   nothing. Copy on a speaking-turn menu writes the live selection in that
   turn captured when the menu opened; a collapsed caret, or a selection

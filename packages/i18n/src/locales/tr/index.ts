@@ -293,6 +293,7 @@ export const tr = {
     copyFailed: "Panoya kopyalanamadı",
     messageMenu: "Mesaj işlemleri",
     conversationMenu: "Konuşma işlemleri",
+    selectionActions: "Seçili metin işlemleri",
     addToConversation: "Sohbete ekle",
     addedToConversation: "Sohbete eklendi",
     selectMessageText: "Mesaj metnini seç",
