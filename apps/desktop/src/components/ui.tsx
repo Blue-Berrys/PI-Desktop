@@ -773,7 +773,8 @@ export function CheckboxGroup<T extends string>({
   /** Prevent unchecking below this count (default 0 = no minimum). */
   minSelected?: number;
 }) {
-  const toggle = (value: T, on: boolean) => {
+  const toggle = (value: T) => {
+    const on = !values.includes(value);
     const next = on
       ? [...values, value]
       : values.filter((v) => v !== value);
@@ -782,17 +783,30 @@ export function CheckboxGroup<T extends string>({
   };
 
   return (
-    <div className={cx("ui-checkbox-group", className)} role="group" aria-label={label}>
-      {options.map((option) => (
-        <Checkbox
-          key={option.value}
-          className={itemClassName}
-          checked={values.includes(option.value)}
-          disabled={disabled}
-          onChange={(e) => toggle(option.value, e.target.checked)}
-          label={option.label}
-        />
-      ))}
+    <div
+      className={cx("settings-segment", className)}
+      role="group"
+      aria-label={label}
+    >
+      {options.map((option) => {
+        const selected = values.includes(option.value);
+        return (
+          <button
+            key={option.value}
+            type="button"
+            aria-pressed={selected}
+            className={cx(
+              "settings-segment-item",
+              selected && "active",
+              itemClassName,
+            )}
+            disabled={disabled}
+            onClick={() => toggle(option.value)}
+          >
+            {option.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -153,8 +153,6 @@ export function VoiceSettingsSection({
             ]}
             label={t("settings.voiceLanguages")}
             disabled={!voice.enabled}
-            className="voice-lang-checks"
-            itemClassName="voice-lang-label"
             minSelected={1}
           />
         </SettingsRow>
