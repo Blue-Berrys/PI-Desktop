@@ -29,7 +29,6 @@ import {
 import { useAppStore } from "../../../stores/app-store";
 import {
   copySelectionOrFallback,
-  quoteSelectionOrFallback,
 } from "../../../lib/chat-transcript-text";
 
 export type OpenTranscriptMenu = (
@@ -68,7 +67,7 @@ export function useChatTextActions() {
   const { t } = useTranslation();
   const showToast = useAppStore((state) => state.showToast);
   const activeSessionId = useAppStore((state) => state.activeSessionId);
-  const appendComposerText = useAppStore((state) => state.appendComposerText);
+  const addComposerExcerpt = useAppStore((state) => state.addComposerExcerpt);
 
   const copyText = useCallback(
     async (text: string, selection?: string) => {
@@ -106,12 +105,11 @@ export function useChatTextActions() {
   const addToConversation = useCallback(
     (text: string, selection?: string) => {
       if (!activeSessionId) return;
-      const quote = quoteSelectionOrFallback(selection, text);
-      if (!quote) return;
-      appendComposerText(activeSessionId, quote);
-      showToast(t("chat.addedToConversation"), { variant: "success" });
+      if (addComposerExcerpt(activeSessionId, copySelectionOrFallback(selection, text))) {
+        showToast(t("chat.addedToConversation"), { variant: "success" });
+      }
     },
-    [activeSessionId, appendComposerText, showToast, t],
+    [activeSessionId, addComposerExcerpt, showToast, t],
   );
 
   return { copyText, selectText, addToConversation };

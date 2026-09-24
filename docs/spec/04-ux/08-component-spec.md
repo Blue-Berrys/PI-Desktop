@@ -1729,11 +1729,13 @@ Single message render — either user (plaintext) or assistant (markdown streami
   an assistant turn opens the same action vocabulary as a body-level
   pointer-anchored menu (Copy, Add to conversation, Select text, and the row's
   own Edit / Delete / Regenerate / Branch / revision items). Add to conversation
-  appends the captured selection as a Markdown quote to the active session's
-  composer, or quotes the whole speaking turn when the selection is collapsed
-  or outside the row. It preserves the existing draft and file references,
-  separates the quote with at least one blank line, focuses the composer at the
-  end, and never sends automatically. Selecting text inside one speaking turn
+  attaches the captured selection to the active session's composer, or the
+  whole speaking turn when the selection is collapsed or outside the row. The
+  composer shows a counted excerpt badge above its editable text. Opening the
+  badge previews each excerpt and allows individual removal. It preserves the
+  existing draft and file references, focuses the composer, and never sends
+  automatically. On send, the excerpts follow the editable prompt as quoted
+  context; failed sends restore them. Selecting text inside one speaking turn
   also shows a one-action floating control beside the selection, so this path
   needs no right-click. The control does not appear for tool output, thinking,
   the composer, or a selection crossing turns. It closes when the selection

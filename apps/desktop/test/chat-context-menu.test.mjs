@@ -4,7 +4,6 @@ import { placeContextMenu } from "../src/lib/context-menu.ts";
 import {
   conversationPlainText,
   copySelectionOrFallback,
-  quoteSelectionOrFallback,
 } from "../src/lib/chat-transcript-text.ts";
 
 test("a menu that fits the viewport stays at the pointer", () => {
@@ -56,15 +55,4 @@ test("copy prefers a live selection over the whole turn", () => {
   assert.equal(copySelectionOrFallback("  this line  ", "whole message"), "  this line  ");
   assert.equal(copySelectionOrFallback("", "whole message"), "whole message");
   assert.equal(copySelectionOrFallback(undefined, "whole message"), "whole message");
-});
-
-test("adding to the conversation quotes a selection or the whole turn", () => {
-  assert.equal(
-    quoteSelectionOrFallback(" first\n\nlast ", "whole message"),
-    "> first\n>\n> last",
-  );
-  assert.equal(
-    quoteSelectionOrFallback("", "whole\nmessage"),
-    "> whole\n> message",
-  );
 });

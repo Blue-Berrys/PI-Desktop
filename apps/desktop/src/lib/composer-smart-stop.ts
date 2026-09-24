@@ -1,3 +1,5 @@
+import type { ComposerExcerpt } from "./composer-excerpts";
+
 export type ComposerDraftFileReference = {
   path: string;
   name: string;
@@ -10,6 +12,7 @@ export type ComposerDraftFileReference = {
 export type ComposerDraftSnapshot = {
   text: string;
   fileReferences: ComposerDraftFileReference[];
+  excerpts?: ComposerExcerpt[];
 };
 
 export type ComposerPrefill = ComposerDraftSnapshot & {

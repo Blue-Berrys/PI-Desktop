@@ -3774,21 +3774,24 @@ identify the platform validation still needed.
   activate the floating Add to conversation control. 2) Repeat with multiline
   text in an assistant answer. 3) Select across two turns, select tool output,
   clear a selection, and scroll the transcript with the control open. 4) Switch
-  sessions before a pending quote is consumed.
+  sessions with attached excerpts. 5) Open the counted badge, remove one
+  excerpt, send with another, and simulate a rejected send.
 - **Expected**: A single localized action appears next to a selection within
   one speaking turn without opening the right-click menu. It remains in the
-  viewport and inserts only the selected excerpt as a Markdown quote, after a
-  blank line in the current draft. Existing text and file references remain,
-  the caret moves to the end, and nothing is sent. Other selections show no
+  viewport and adds only the selected excerpt to a counted badge above the
+  editable composer. The badge previews and removes individual excerpts.
+  Existing text and file references remain; nothing is sent until the user
+  submits. The submitted prompt contains the selected text as quoted context,
+  and a rejected send restores the badge. Other selections show no
   control; clearing, scrolling, resizing, or leaving the pane closes it. A
-  pending insertion never reaches another session or appears later in its old
-  session. The right-click action remains available for whole-turn fallback.
+  attachment never reaches another session. The right-click action remains
+  available for whole-turn fallback.
 - **Specs linked**: `04-ux/08-component-spec.md` §8.3 / §8.5,
   `04-ux/09-interaction-patterns.md` §1.5, ADR 0306
 - **Acceptance**: C (chat stream), Quality
 - **Milestone**: M5
 - **Status**: Chromium component covered (`node scripts/e2e-message-edit-copy.mjs`)
-  and composer append covered (`pnpm test:e2e:composer-paste`); full-app visual
+  and composer badge/send covered (`pnpm test:e2e:composer-paste`); full-app visual
   scenario Draft
 
 #### E2E-CHAT-copy-formula-as-tex: Copying rendered math yields its source

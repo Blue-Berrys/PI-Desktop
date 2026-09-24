@@ -344,6 +344,8 @@ export type AppState = {
   dismissToast: (id: number) => void;
   composerPrefill: ComposerPrefill | null;
   appendComposerText: (sessionId: string, text: string) => void;
+  composerExcerptVersion: number;
+  addComposerExcerpt: (sessionId: string, text: string) => boolean;
   clearComposerPrefill: () => void;
   /** Renderer-only subagent details selected from the transcript. */
   subagentPanel: SubagentPanelSelection | null;

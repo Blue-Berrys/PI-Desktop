@@ -419,11 +419,12 @@ may be retained while exactly one workspace supplies the visible shell context.
   turns; it closes when the selection clears, the transcript scrolls, the
   window resizes, or the pane changes. The speaking-turn context menu offers
   the same action, using the selected excerpt or the whole turn when no local
-  selection exists. The action makes a line-by-line Markdown quote and
-  preserves the current session's draft and file references, ensures a blank
-  line before the quote, focuses the composer after the inserted text, and does
-  not submit it. The insertion is session-scoped and is never applied to a
-  different conversation after navigation.
+  selection exists. The composer shows the selection as a counted attachment
+  badge above the editable draft; opening it previews and can remove each
+  excerpt. Typed text and file references remain intact. Sending appends the
+  excerpts as quoted context after the typed prompt, with a blank line between
+  them, and a failed send restores the badge. The action never submits by
+  itself and never attaches to another conversation after navigation.
 
 ### 1.6 Local profile footer
 

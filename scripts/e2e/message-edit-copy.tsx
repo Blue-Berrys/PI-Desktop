@@ -8,6 +8,7 @@ import { MessageRow } from "../../apps/desktop/src/features/chat/transcript/Mess
 import { TranscriptMenuProvider } from "../../apps/desktop/src/features/chat/transcript/TranscriptMenu";
 import { useAppStore } from "../../apps/desktop/src/stores/app-store";
 import { TranscriptSelectionAction } from "../../apps/desktop/src/features/chat/transcript/TranscriptSelectionAction";
+import { readComposerDraft, resetComposerDraftCache } from "../../apps/desktop/src/lib/composer-draft-cache";
 
 const check = (ok: boolean, label: string) => { if (!ok) throw new Error(label); };
 const settle = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
@@ -50,6 +51,7 @@ Object.assign(globalThis, { messageEditCopyProbe: async () => {
   document.body.append(container);
   const root = createRoot(container);
   useAppStore.setState({ activeSessionId: "message-session", composerPrefill: null });
+  resetComposerDraftCache();
   flushSync(() => root.render(<I18nextProvider i18n={i18n}><TranscriptMenuProvider>
     <SelectionFixture />
   </TranscriptMenuProvider></I18nextProvider>));
@@ -71,8 +73,8 @@ Object.assign(globalThis, { messageEditCopyProbe: async () => {
   check(!!document.querySelector('[data-selection-action="add-to-conversation"]'),
     "Selecting message text did not reveal the inline action");
   await click('[data-selection-action="add-to-conversation"]');
-  check(useAppStore.getState().composerPrefill?.text === "> saved",
-    "Inline action did not quote only the selected text");
+  check(readComposerDraft("message-session")?.excerpts?.[0]?.text === "saved",
+    "Inline action did not attach only the selected text");
   selection.removeAllRanges();
   await settle();
   check(!document.querySelector('[data-selection-action="add-to-conversation"]'),
@@ -112,8 +114,8 @@ Object.assign(globalThis, { messageEditCopyProbe: async () => {
   await menu(editor);
   await click('[data-context-menu-item="add-to-conversation"]');
   check(
-    useAppStore.getState().composerPrefill?.text === "> ORANGE-927",
-    "Add to conversation did not quote the selected draft text",
+    readComposerDraft("message-session")?.excerpts?.[1]?.text === "ORANGE-927",
+    "Add to conversation did not attach the selected draft text",
   );
   editor.setSelectionRange(13, 23);
   await menu(editor);
@@ -139,5 +141,5 @@ Object.assign(globalThis, { messageEditCopyProbe: async () => {
   await click('[data-context-menu-item="copy"]');
   check(copied === "Original saved message", "Cancel changed the saved message");
   root.unmount();
-  return "PASS: selection action appears without a menu for speaking-turn text only, selected text adds as a quote, partial draft copy, whole draft copy, select text, editing actions, cancel and saved-message copy";
+  return "PASS: selection action appears without a menu for speaking-turn text only, selected text attaches to the draft, partial draft copy, whole draft copy, select text, editing actions, cancel and saved-message copy";
 } });
