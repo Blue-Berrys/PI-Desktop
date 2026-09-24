@@ -50,7 +50,16 @@ Object.assign(globalThis, { messageEditCopyProbe: async () => {
   const container = document.createElement("div");
   document.body.append(container);
   const root = createRoot(container);
-  useAppStore.setState({ activeSessionId: "message-session", composerPrefill: null });
+  useAppStore.setState({
+    activeSessionId: "message-session",
+    composerPrefill: null,
+    prepareUserMessageEdit: async () => ({
+      id: "message",
+      role: "user",
+      content: "Original saved message",
+      createdAt: "2026-09-21T00:00:00Z",
+    }),
+  });
   resetComposerDraftCache();
   flushSync(() => root.render(<I18nextProvider i18n={i18n}><TranscriptMenuProvider>
     <SelectionFixture />
