@@ -659,14 +659,14 @@ visually distinct from list content.
   splash at 3x; ADR 0125). The component subscribes to
   `document.documentElement[data-theme]` via a `MutationObserver` and swaps the
   source at runtime for the sidebar and startup splash without a reload. The
-  empty-home hero uses `HomeMascotLogo` as a 100px eight-frame GIF. Light and
-  dark themes each have a dedicated GIF plus still PNG. CSS follows
-  `document.documentElement[data-theme]` without a reload; anything other than
-  `light` uses the dark artwork. The mascot loops a processed wave with a
-  short idle hold on the first frame. Playback is native to the GIF and does
-  not change on pointer hover; reduced motion swaps to the matching still
-  first-frame PNG. The expanded/collapsed sidebar remains 20px/18px and the
-  startup splash 64px.
+  empty-home hero uses `HomeMascotLogo` in a 100px slot. The standard light and
+  dark GIFs remain eight-frame waves with matching still PNGs. When the root
+  `lang` begins with `zh` and the theme is dark, CSS selects the supplied
+  30-frame transparent Chinese GIF and its matching still PNG. Theme and
+  language changes take effect without a reload. Playback is native to GIF,
+  does not change on pointer hover, and reduced motion selects the matching
+  still. The expanded/collapsed sidebar remains 20px/18px and the startup
+  splash 64px.
   Home and thread-docked composer prompt rows do not render a leading brand
   icon.
 - Project and Temporary session creation controls render the dedicated
@@ -2068,6 +2068,24 @@ Renderer: `apps/desktop/src/components/Markdown.tsx` + `apps/desktop/src/lib/shi
   height derives from `--composer-dock-height`, which the composer republishes as
   its draft grows, so dashes move without a marker change or a window resize.
 
+#### Markdown table actions
+
+Every rendered Markdown table has its own compact toolbar: Copy as Markdown,
+Download as CSV, and Expand table. Copy preserves inline Markdown and column
+alignment and produces a standalone table even inside a quote or list. CSV
+contains the displayed cell text, UTF-8 with BOM, quoted fields, and CRLF rows;
+quotes and cell line breaks are escaped, and formula-leading nonnumeric cells
+are exported as text. Clipboard failures produce an error toast.
+
+The expanded view uses a modal dialog with the existing theme tokens, a scrollable
+table and opaque sticky headers, and copy/download controls. Columns retain
+readable minimum widths; narrow previews scroll horizontally instead of crushing
+short labels. It follows streamed rows,
+contains keyboard focus, closes with Escape or Close, and restores focus to its
+trigger. Native work-panel surfaces remain hidden while the modal is open.
+Tables retain their existing inline layout and link/file actions. No editing,
+sorting, new settings, persistence, or host protocol is introduced.
+
 ---
 
 ## 9. ToolCallRow
@@ -2313,40 +2331,51 @@ never summarizes from its own arguments:
   └────────────────┘    └───────────────────────────────────────────┘
 ```
 
-Clicking a topology node toggles an inset grouped side sheet in the right-side
-work-panel dock rather than expanding the transcript. Clicking the selected node
-again closes the side sheet; selecting another node replaces the current detail
-in place:
+Clicking a topology node opens a dedicated `subagent` tab in the work panel —
+the same tab strip that hosts Review, files, and plugin views — instead of
+expanding the transcript. Re-opening the same delegation activates its tab;
+parallel delegates coexist as independent tabs. The tab renders the delegation
+as a conversation:
 
 ```text
 ┌──────────────────────────────────────────────┐
-│ [bot] code-reviewer         [Completed]  32s │
-│       claude-sonnet-4-5                      │
-│                                              │
-│ TASK                                         │
-│ ┌──────────────────────────────────────────┐ │
-│ │ Review the changes in src/stores for …   │ │
-│ │                               Show more  │ │
-│ └──────────────────────────────────────────┘ │
-│                                              │
-│ ACTIVITY                            3 steps  │
-│ ● Thinking …                                 │
-│ ● Read store.ts                              │
+│ [bot] [code-reviewer] [✕]  [bot] [explorer#2] [✕]   [+] ⤢ │
+├──────────────────────────────────────────────┤
+│                    ┌──────────────────────┐ │
+│                    │ Review the changes   │ │
+│                    │ in src/stores.       │ │
+│                    └──────────────────────┘ │
+│ ● Thinking …                                │
+│ ● Read store.ts                             │
+│ The store diff looks consistent. …          │
+│                    ┌──────────────────────┐ │
+│                    │ Now check the tests. │ │
+│                    └──────────────────────┘ │
+│ ● Edit composer.tsx                         │
+├──────────────────────────────────────────────┤
+│ [ Subagents are driven by the main agent… ] │
 └──────────────────────────────────────────────┘
 ```
 
-- The dock renders a sticky identity header with the delegate name and model
-  on the left and the status capsule plus elapsed time trailing on the same
-  row, followed by the Task call's `task` argument as a selectable inset
-  grouped card and the live process timeline.
-- Reports and counters remain omitted from this surface. The live thinking,
-  tool, and answer process is shown on the dock timeline. The topology card
-  remains a compact summary in the transcript and does not gain height when
-  the dock opens.
-- The selected task is re-found from the session's live/retained messages, so
-  the header status and elapsed time stay current while the delegate runs.
-- A missing or deleted task renders a localized unavailable state. Delegation
-  rows remain excluded from the parent turn stream and minimap.
+- The tab is a message list, not a card: every `Task` call of the resume
+  chain renders its `task` argument as a user row (the main transcript's user
+  bubble), and the delegate's thinking, tool, and answer rows under that call
+  render with the same message-list language, so a follow-up prompt reads as
+  the next user turn.
+- The composer at the foot is a disabled two-row textarea whose placeholder
+  says subagents are driven by the main agent and cannot take input; the tab
+  is display-only and has no send path.
+- Tab labels carry the agent name captured when the tab opened, with a
+  strip-order `#n` suffix when the same name occurs more than once; a
+  localization fallback covers a delegate with no name.
+- Tabs are never opened automatically when a delegate starts. They persist
+  after the delegate settles until the user closes them and are scoped to
+  their session like every other tab.
+- The conversation is re-found from the session's live/retained messages, so
+  streaming rows keep arriving in the open tab while the delegate runs.
+- A delegation whose Task calls are missing renders a localized unavailable
+  state. Delegation rows remain excluded from the parent turn stream and
+  minimap.
 
 - Runs are rebuilt from the message list on every render, so group memoization
   compares them by row identity and length rather than by object identity —

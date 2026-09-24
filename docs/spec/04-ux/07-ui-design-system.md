@@ -124,14 +124,12 @@ Codex as a visual reference. The identity contract is deliberately small:
   and NSIS shortcut identity stay aligned so native notifications,
   notification settings, and taskbar groups identify the app as `PI-Desktop`
   rather than Electron.
-- The empty-home hero uses a 100px `HomeMascotLogo` GIF: an eight-frame waving
-  mascot compiled from the supplied light and dark action sets, with a short
-  idle hold on the first frame. CSS selects the pair from
-  `document.documentElement[data-theme]`; anything other than `light` uses the
-  dark artwork. Playback is native to the GIF. There is no random pose
-  selection, JavaScript timer, or hover-driven speed change. Reduced motion
-  swaps the GIF for the matching first-frame PNG without changing the 100px
-  slot.
+- The empty-home hero uses a 100px `HomeMascotLogo` GIF. The standard
+  eight-frame wave remains in light mode and non-Chinese dark mode. Chinese
+  locales (`lang` beginning with `zh`) use the supplied 30-frame transparent
+  GIF in dark mode. Reduced motion swaps each variant to its matching first
+  frame without changing the 100px slot. Playback is native to GIF; there is
+  no random pose selection, JavaScript timer, or hover-driven speed change.
   `BrandLogo` remains 20px/18px in the expanded/collapsed sidebar and 64px in
   the startup splash. Composer prompt rows do not render a leading brand icon
   in either home or thread-docked mode.
@@ -852,11 +850,10 @@ model):
   controls remain icon-only and use the semantic hover wash
 - Empty hero title uses `var(--ds-text-primary)` (light override `#1a1c1f`);
   never hardcode light ink for shared hero styles
-- Empty-home branding stays quiet: the 100px eight-frame mascot GIF is the
-  sole animated hero mark. Light and dark themes each use a dedicated asset
-  pair. It loops a short wave with an idle hold so the composer remains the
-  primary task surface. Pointer hover does not change the cadence; reduced
-  motion shows the matching still first frame.
+- Empty-home branding stays quiet: the 100px mascot GIF is the sole animated
+  hero mark. The standard light/dark variants keep their eight-frame wave;
+  dark Chinese locales use a 30-frame transparent variant. Pointer hover does
+  not change cadence; reduced motion shows the matching still first frame.
 - Night home composer plate styles are **dark-scoped only** (elevated-primary
   `#212121f5` + standard elevation-prominent)
 - Empty draft row keeps **one visible line / 28px optical minimum** so the

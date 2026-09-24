@@ -104,6 +104,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     applyApplicationMenuSettings,
     applyDeveloperMode,
     applyPreventScreenSleep,
+    applyKeepAwakeWhileRunning,
     resolveEffectiveCommandShell,
     modelsDevCatalog,
     vendorOAuth,
@@ -262,6 +263,7 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     applyApplicationMenuSettings,
     applyDeveloperMode,
     applyPreventScreenSleep,
+    applyKeepAwakeWhileRunning,
     resolveEffectiveCommandShell,
   });
   registerConfigSyncIpc({
@@ -342,6 +344,12 @@ export function registerIpcHandlers(dependencies: RegisterIpcDependencies) {
     getNpmPath: () => readNpmPath(dataDir),
     setNpmPath: (path) => writeNpmPath(dataDir, path),
     importRoot: join(dataDir, "plugins", "imported"),
+    getImportedDescriptions: async () => {
+      const currentHost = getHost();
+      if (!currentHost) throw new Error("host unavailable");
+      const { plugins: registered } = await currentHost.call<{ plugins: import("@pi-desktop/shared").PluginSummary[] }>("plugins.list");
+      return registered.flatMap(plugin => plugin.description ? [plugin.description] : []);
+    },
     loadDevPlugin: async (path) => {
       const currentHost = getHost();
       if (!currentHost) throw new Error("host unavailable");

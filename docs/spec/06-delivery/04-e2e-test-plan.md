@@ -8,6 +8,41 @@
 
 ## 1. Goals
 
+### E2E-CHAT-fork-completed-reply-while-running
+
+- **Preconditions:** Isolated real desktop profile, configured model, two turns
+  in one Desktop conversation; the first assistant reply has completed.
+- **Steps:** Send the second prompt. While it is still running, click **Branch
+  from this reply** on the first reply. Continue chatting in the child, then
+  return to the parent.
+- **Expected:** The child contains only history through the first reply, can
+  continue independently, and starts with no running turn. The parent keeps
+  running and retains its second prompt and reply. No live tail is overwritten.
+  A whole-session fork and a fork within the active tool loop remain rejected.
+  A navigation during the fork response records the child without stealing focus.
+- **Coverage:** Host fork regression, renderer session-fork-running tests,
+  session IPC contract tests, and real-model desktop acceptance. A local model
+  fixture or mocked component result is not real-model acceptance evidence.
+
+### E2E-POWER-keep-awake-setting
+
+- **Preconditions:** An isolated desktop profile with the setting absent; no
+  live provider is required.
+- **Steps:** Open Settings > General and enable Keep computer awake. Confirm the
+  main process owns one `prevent-app-suspension` blocker while idle. Close and
+  reopen the app using the same profile; confirm it restores one blocker.
+  Enable and disable Prevent screen sleep while Keep computer awake stays on,
+  confirming the independent system request remains. Disable Keep computer awake
+  and confirm its blocker is released; then quit and confirm cleanup.
+- **Expected:** The setting persists, acts immediately, never starts duplicate
+  blockers, and releases on disable or app shutdown. The display switch keeps
+  its own blocker and cannot disable the system blocker. Manual sleep and lid
+  close are outside this contract.
+- **Status:** Automated in `pnpm test:e2e:keep-awake`, with a real isolated
+  Electron/Host profile and a Windows `powercfg /requests` assertion when no
+  other Electron power request is present at baseline. Controller lifecycle
+  and Host settings round-trip also have targeted tests.
+
 ### E2E-IMAGES-provider-save-feedback
 
 - **Preconditions:** Image configuration UI fixture; English and Chinese.
@@ -2150,6 +2185,24 @@ identify the platform validation still needed.
 - **Status**: Automated (`apps/desktop/test/user-login-path.test.mjs`,
   `apps/desktop/test/plugin-mcp.test.mjs`)
 
+#### E2E-MCP-stdio-windows-npx: Official Node and fnm both start `npx` MCP (issue #789)
+
+- **Preconditions**: Windows; Node is either the official `Program Files\nodejs`
+  install (`node.exe` + `npx.cmd` + `npx-cli.js` on PATH) or fnm-managed and
+  not on the GUI PATH.
+- **Steps**: 1) Add Memory from the MCP market (`npx -y @modelcontextprotocol/server-memory`).
+  2) Test connection. 3) Repeat with a user-typed `npx` server.
+- **Expected**: Official Node rewrites to `node.exe` + `npx-cli.js` and
+  handshakes. fnm is discovered from `%LOCALAPPDATA%\fnm\aliases\default` when
+  PATH has no node. Remaining `.cmd` shims start through `cmd.exe /d /s /c`
+  with quoted literal args, never `shell: true`. A Git-Bash extensionless
+  `npx` next to `npx.cmd` is not chosen. Missing binaries still report
+  `command not found: npx`.
+- **Specs linked**: ADR 0038, D624, `07-plugins/04-plugin-security.md`
+- **Acceptance**: Quality
+- **Milestone**: M6+
+- **Status**: Automated (`apps/desktop/test/mcp-stdio-launch.test.mjs`)
+
 ### Session Persistence
 
 #### E2E-020: Session survives restart
@@ -3087,18 +3140,20 @@ identify the platform validation still needed.
 
 #### E2E-046: PI-Desktop renderer branding and composer icon boundary
 
-- **Preconditions**: App running in both English and zh-CN locales, with an
-  empty home and a docked transcript available.
-- **Steps**: 1) Inspect the expanded and collapsed sidebar. 2) Inspect the
-  empty-home hero and docked composer. 3) Observe the eight-frame mascot GIF
-  looping in place, move the pointer over it, and confirm its cadence and
-  geometry do not change. Enable reduced motion and confirm the still first
-  frame is shown. 4) Focus the footer Settings and Plugins icons, then each
-  project/Temporary session create control. 5) Open Settings and the composer
-  input.
+- **Preconditions**: App running in English, zh-CN, and zh-TW locales, with
+  an empty home and a docked transcript available.
+- **Steps**: 1) Inspect the expanded and collapsed sidebar. 2) In light mode,
+  inspect the empty-home hero in English and Chinese. 3) Switch to dark mode;
+  confirm English uses the standard dark wave and `zh-CN` / `zh-TW` use the
+  30-frame Chinese GIF. Move the pointer over the mascot and confirm its
+  cadence and geometry do not change. Enable reduced motion and confirm each
+  locale/theme combination shows its matching still first frame. 4) Inspect
+  the docked composer, footer Settings and Plugins icons, and session-create
+  controls. 5) Open Settings and the composer input.
 - **Expected**: Visible shell identity reads `PI-Desktop`; the empty-home hero
-  renders the theme-matching 100px `HomeMascotLogo` GIF with a short idle hold
-  and a looping wave. Pointer hover does not alter the cadence or geometry,
+  renders the theme- and locale-matching 100px `HomeMascotLogo` GIF. Only dark
+  Chinese locales use the supplied 30-frame artwork; other combinations keep
+  their existing variants. Pointer hover does not alter cadence or geometry,
   and reduced motion shows the matching still first frame.
   The expanded/collapsed
   sidebar renders the derived `src/assets/brand/logo-*.png` asset through `BrandLogo`
@@ -5185,17 +5240,21 @@ must keep splitting are covered by `markdown-blocks.test.mjs`.
      and inspect the light eight-frame `HomeMascotLogo` GIF in the empty-home
      hero. Hover the mascot and verify that its cadence does not change.
   3. Switch the theme to dark (Settings → Basics → Appearance, or system appearance change).
-  4. Re-inspect the same surfaces without reloading.
+  4. In English, confirm the standard dark GIF. Switch the app language to
+     `zh-CN` and `zh-TW` and confirm the 30-frame Chinese dark GIF appears
+     without a reload. Enable reduced motion and confirm the matching Chinese
+     still frame appears.
   5. Switch back to light and re-inspect.
 - **Expected**:
   - Light and dark mode render `src/assets/brand/logo-light.png` /
     `src/assets/brand/logo-dark.png`
     live in the sidebar and startup splash without a window reload.
-  - The empty-home hero renders the 100px eight-frame mascot GIF for the
-    active theme (`home-mascot-light.gif` / `home-mascot-dark.gif`) with a
-    short idle hold and a looping wave. Switching theme swaps the pair live
-    without a window reload. Pointer hover does not change the cadence;
-    under reduced motion the matching still first frame remains visible.
+  - The empty-home hero renders the 100px mascot GIF for the active theme and
+    locale. Light mode uses `home-mascot-light.gif`; dark mode uses
+    `home-mascot-dark.gif`, except Chinese locales use
+    `home-mascot-dark-zh.gif`. Theme and language changes swap the asset live
+    without a window reload. Pointer hover does not change cadence; reduced
+    motion shows the matching still first frame.
   - Sizes stay stable across theme changes (sidebar 20px, hero 100px, splash
     64px), and the marks stay decorative with no click, keyboard, or focus
     behavior.
@@ -6502,6 +6561,41 @@ must keep splitting are covered by `markdown-blocks.test.mjs`.
   `apps/desktop/test/rpc-lifecycle-contract.test.mjs` (client precheck),
   `packages/shared/src/rpc-limits.test.ts`. Desktop journey remains Draft.
 
+#### E2E-248: Subagent details open as closable work-panel tabs with a read-only composer
+
+- **Preconditions**: A project-bound Agent session whose assistant emits at
+  least two `Task` calls — one named `explorer` and one resumed `explorer`
+  follow-up — plus one `Task` that ends in failure; the work panel closed.
+- **Steps**:
+  1. Run the turn. Without clicking anything, verify the panel stays closed
+     while the delegates run (no tab is opened automatically).
+  2. Click the `explorer` topology node. Verify a `subagent` tab opens in the
+     work panel's normal tab strip (labeled `explorer`, bot icon) and the
+     tab strip keeps its other tabs.
+  3. Click the second (resumed) `explorer` node. Verify a second tab opens
+     labeled `explorer#2`, both tabs coexist, and each can be activated,
+     drag-reordered, and closed via ×, middle-click, or Delete.
+  4. In the resumed tab, verify the conversation reads `user: first prompt`,
+     delegate rows, `user: follow-up prompt`, delegate rows — the same
+     message-list language as the main transcript (user bubbles, tool rows,
+     thinking rows, markdown answers).
+  5. Verify the composer at the foot is a disabled two-row textarea whose
+     placeholder reads the read-only hint, in every supported locale.
+  6. Wait for the failed delegate to settle, open its tab, and verify the
+     ended tab persists until manually closed.
+  7. Switch to another session and back. Verify the tabs are restored per
+     session and closed tabs stay closed.
+- **Expected**: No auto-open on delegate start; N subagents = N coexisting
+  closable tabs with deduplicated `name#n` labels; the tab body is the
+  delegation's user/assistant message stream with follow-up prompts as user
+  turns; the composer is disabled with the in-field hint and has no send
+  path; ended delegates' tabs persist until closed; tabs are session-scoped.
+- **Specs linked**: `04-ux/08-component-spec.md` (delegation tab),
+  `04-ux/09-interaction-patterns.md` (work panel tabs)
+- **Acceptance**: Quality
+- **Milestone**: M6
+- **Status**: Draft
+
 #### E2E-119: Parallel subagents report back without entering the parent's context
 
 - **Preconditions**: A project-bound Agent session with the user home containing
@@ -6528,10 +6622,10 @@ must keep splitting are covered by `markdown-blocks.test.mjs`.
   7. Switch the session to Plan, then to Goal, and inspect the tool catalog.
   8. Reload the session and re-expand the delegation card and every `Task`
      node.
-  9. Open a node with a long description and long tool paths, then resize the
-     work-panel dock to its minimum, default, and a wider width. Inspect the
-     topology card and live process at each width without repeatedly dragging
-     the divider to read a complete line.
+  9. Open a node with a long description and long tool paths. Resize the work
+     panel to its minimum, default, and a wider width and inspect the topology
+     card and the delegation tab at each width. Long content wraps inside the
+     committed width without dragging the divider to read a complete line.
 - **Expected**:
   - Both delegates in step 1 run concurrently, and `pinned` streams on its own
     provider/model while the parent keeps the session's.
@@ -6549,11 +6643,11 @@ must keep splitting are covered by `markdown-blocks.test.mjs`.
     count. Expanding a node shows the brief, report exactly once, and
     `status`/`turns`/`toolCalls`. Delegate rows appear only inside that node,
     never in the turn stream or the minimap.
-  - At narrow, default, and wide dock widths, topology titles, descriptions,
+  - At narrow, default, and wide panel widths, topology titles, descriptions,
     and step summaries reflow within the card instead of using a fixed
     one-line ellipsis. Long tool paths, commands, and answer fragments in the
-    dock wrap inside the committed width, produce no horizontal overflow, and
-    retain the panel body as the only scroll owner.
+    delegation tab wrap inside the committed width, produce no horizontal
+    overflow, and retain the tab as the only scroll owner.
   - If the parent keeps working after those `Task` calls — thinking, `Read`,
     `Grep`, or a lifecycle row — that work is a separate processing group, not
     rows inside the delegation card (D319). The card's tile, “Subagent working”
@@ -8431,7 +8525,7 @@ must keep splitting are covered by `markdown-blocks.test.mjs`.
 | M5 (Chat file references) | E2E-CHAT-shorthand-file-ref-opens-the-matching-file, E2E-CHAT-file-ref-opens-the-surface-that-owns-it |
 | M6+ (Chat file references) | E2E-PLUGIN-file-view-collapse-persists |
 | M6+ (project folder roots) | E2E-PLUGIN-file-view-switches-folder-per-project |
-| Post-MVP | E2E-022A, E2E-022B, E2E-022C, E2E-024I, E2E-024J, E2E-024K, E2E-024L, E2E-024M (plugin roadmap R2/R3/R6) |
+| Post-MVP | E2E-PLUGIN-pi-npm-skill-discovery, E2E-022A, E2E-022B, E2E-022C, E2E-024I, E2E-024J, E2E-024K, E2E-024L, E2E-024M (plugin roadmap R2/R3/R6) |
 | Post-baseline local automation | E2E-220 |
 | Post-MVP remote control | E2E-221, E2E-222, E2E-223, E2E-224, E2E-225, E2E-226, E2E-227, E2E-228, E2E-229, E2E-230, E2E-231, E2E-232 |
 | Trusted extensions (R7 v1) | E2E-DIALOG-long-text-boundaries, E2E-241, E2E-242, E2E-HOOKS-cancel-and-dispose, E2E-TRUSTED-EXTENSION-custom-agent-stream-and-binding, E2E-243, E2E-244, E2E-245, E2E-PLUGIN-imported-pi-package-skills, E2E-PLUGIN-import-extension-installs-dependencies, E2E-PLUGIN-import-extension-reports-missing-dependency, E2E-PLUGIN-declared-provider-appears-in-the-native-provider-list |
@@ -8624,11 +8718,12 @@ This test plan spec is accepted when:
   row, with no Logo/Home brand or back/forward buttons.
 
 ### US-UI-17 PI-Desktop home hero logo
-- On empty chat home, the 100px `HomeMascotLogo` GIF renders above the title
-  as an eight-frame waving mascot with a short idle hold. Light and dark
-  themes each use a dedicated GIF and still PNG.
-- Pointer hover does not change the cadence or geometry; reduced motion shows
-  the matching still first frame. The mascot remains decorative.
+- On empty chat home, the 100px `HomeMascotLogo` renders above the title.
+  Light mode and non-Chinese dark mode use the existing eight-frame GIFs;
+  dark `zh-CN` and `zh-TW` use the 30-frame Chinese GIF and matching still.
+- Theme and locale changes select the matching art without a reload. Pointer
+  hover does not change cadence or geometry; reduced motion shows the matching
+  still first frame. The mascot remains decorative.
 - Title is 28px / weight 400; active project name uses dotted underline (1px, offset 4px).
 - Composer does not render attachment or appshot controls before their payload
   reaches pi end to end.
@@ -14913,6 +15008,30 @@ the latest destination. These assertions measure work counts, not device FPS.
   scripts/e2e-scheduled-workspace.mjs`, using production Electron dispatch and
   real Rust/stdio/SQLite. Only external inference is replaced with an observer.
 
+### E2E-PLUGIN-pi-npm-skill-discovery
+
+- **Preconditions:** Isolated npm package directory and plugin import storage;
+  a package declaring `pi.skills`, optionally executable extensions. No provider.
+- **Steps:** Open Skills, discover the candidate, cancel import, confirm import,
+  read the registered skill body and resources, reload, and attempt a duplicate.
+  Change metadata during confirmation; retry discovery after an error; discover
+  with more than 256 hoisted dependencies and an unreadable scope. Simulate a
+  runtime load failure after host registration and inspect the refreshed state.
+- **Expected:** No implicit import/execution, native explicit consent, preserved
+  resources and runtime skill body, stable imported state, no duplicate import,
+  stale consent refusal, and visible/recoverable errors. Unregistered leftover
+  directories do not count as imports; scoped packages are discovered. Unrelated
+  dependencies and unreadable scopes do not hide healthy skills. A registered
+  import remains marked imported after runtime failure while its error stays visible.
+- **Specs:** 07-plugins/16-trusted-extensions; ADR pi-npm-skill-discovery.
+- **Acceptance:** Plugin skill discovery and explicit trust boundary.
+- **Milestone:** Post-MVP compatibility.
+- **Status:** Automated via `apps/desktop/test/pi-skill-discovery.test.mjs` (real
+  import and plugin child process, native dialog boundary controlled) and
+  `node scripts/e2e-pi-skill-discovery-ui.mjs` (real React/Chromium panel with
+  controlled IPC results). Optional `PI_SKILL_PACKAGE_FIXTURE` points to an
+  unpacked published package for the reported planning-with-files path.
+
 ### E2E-SESSION-temporary-attachment-fork: Preview and independent branch inputs
 
 - **Steps**: In a task without a project, paste text above the long-paste
@@ -14975,6 +15094,27 @@ the latest destination. These assertions measure work counts, not device FPS.
 - **Scenario:** Workspace identity.
 - **Expected:** Stored workspace bindings use the existing project canonicalization contract on both write and read. On Windows, slash direction, case, trailing separators and extended path prefixes do not hide a task from its own project's conversation. The distinction between missing legacy bindings and explicit null remains unchanged. Foreign-project tools cannot list or mutate bound tasks.
 - **Automation:** `node --experimental-strip-types scripts/e2e-scheduled-paths.mjs` uses an isolated real Host and SQLite profile. Inference is not sent to a live provider.
+
+### E2E-MARKDOWN-table-actions
+
+- **Setup**: Render a conversation containing two Markdown tables, including
+  aligned columns, formatted text, Chinese text, commas, quotes, and `<br>` cells.
+- **Steps**: Copy the first table; download its CSV; expand it; use copy inside
+  the modal; close with Escape and with Close. Append a streamed row while the
+  preview is open. Repeat the preview at a narrow width in light/dark themes
+  and English/Chinese. Deny clipboard writes at the browser boundary.
+- **Expected**: Actions operate only on their own table. Markdown retains inline
+  syntax and alignment. CSV decodes as UTF-8 and preserves fields and line breaks.
+  The modal fits the viewport, traps focus, updates streamed rows, blocks native
+  work-panel surfaces, and returns focus on dismissal. Narrow previews keep short
+  headers on one line and scroll horizontally; sticky headers fully cover the
+  rows behind them. Failed copies report an
+  error, not success. Existing table wrapping remains intact.
+- **Automated coverage**: `node --test apps/desktop/test/markdown-table.test.mjs`
+  and `node scripts/test-markdown-table.mjs` after building the desktop. The
+  latter mounts the production Markdown component in an isolated Electron
+  window and exercises real clipboard/download boundaries. It does not call a
+  model or use the user's app profile.
 
 ## Hosted-search continuation contract (offline sidecar)
 

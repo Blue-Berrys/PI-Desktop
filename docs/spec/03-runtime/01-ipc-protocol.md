@@ -1092,8 +1092,12 @@ configuration.
 `session/fork` is a protocol-v5 channel that creates an independent
 session from the source session's current active transcript. When optional
 `throughMessageId` is present, the copied snapshot ends at that message; an
-unknown id returns `NOT_FOUND`. Electron rejects
-the request with `AGENT_BUSY` while that source session has an active turn.
+unknown id returns `NOT_FOUND`. While a Desktop source has an active turn,
+`throughMessageId` may select an already-completed assistant prefix containing
+no messages owned by a running turn. The host validates this under its RPC lock;
+whole-session and active-turn forks still return `AGENT_BUSY`. Native Pi forks
+retain their existing idle/ownership guard. The source continues running when
+the child is activated; the renderer never reloads history over its live tail.
 Electron owns localization and supplies the user-facing branch title; the host
 fallback title is reserved for non-UI callers.
 The host assigns a new session id, message ids, and tool-call ids; it copies

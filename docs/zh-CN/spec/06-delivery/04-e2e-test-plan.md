@@ -9,6 +9,20 @@
 
 ---
 
+### E2E-POWER-keep-awake-setting
+
+- **前提：** 设置值缺失的隔离桌面配置；无需真实模型服务。
+- **步骤：** 在「设置 > 常规」开启「保持电脑唤醒」，确认主进程即使空闲也只持有
+  一个 `prevent-app-suspension` 阻止器。使用同一配置重启应用，确认恢复一个
+  阻止器。开启和关闭「阻止屏幕休眠」时，确认「保持电脑唤醒」的系统请求仍在。
+  关闭「保持电脑唤醒」，确认立即释放，并在退出时确认清理。
+- **预期：** 设置持久化并立即生效，不会重复创建阻止器；关闭开关或退出应用
+  时释放。屏幕开关拥有独立阻止器，不能关闭系统休眠阻止器。手动睡眠和合盖
+  不在该功能的保证范围内。
+- **状态：** `pnpm test:e2e:keep-awake` 使用隔离的真实 Electron/Host 配置；
+  当基线不存在其他 Electron 电源请求时，以 Windows `powercfg /requests`
+  验证系统请求。控制器生命周期和 Host 设置往返另有定向测试。
+
 ### E2E-IMAGES-provider-save-feedback
 
 - **前提：** 生图配置 UI fixture，中英文界面。
@@ -1015,6 +1029,22 @@ task-candidate E2E 从请求工作树运行，但使用主工作区已经准备�
 - **里程碑**：M5
 - **状态**：自动化（host-core 单元测试：登录路径探测 + 子路径注入）
 
+#### E2E-MCP-stdio-windows-npx：官方 Node 与 fnm 都能启动 `npx` MCP（issue #789）
+
+- **先决条件**：Windows；Node 要么是官方 `Program Files\nodejs` 安装
+  （PATH 上有 `node.exe`、`npx.cmd`、`npx-cli.js`），要么由 fnm 管理且不在 GUI PATH 中。
+- **步骤**：1) 从 MCP 市场添加 Memory（`npx -y @modelcontextprotocol/server-memory`）。
+  2) 测试连接。3) 再用用户手写的 `npx` 服务器重复一次。
+- **预期**：官方 Node 改写为 `node.exe` + `npx-cli.js` 并完成握手。PATH 没有
+  node 时从 `%LOCALAPPDATA%\fnm\aliases\default` 发现 fnm。其余 `.cmd` 经
+  `cmd.exe /d /s /c` 启动，参数加引号保持字面量，不用 `shell: true`。
+  与 `npx.cmd` 同目录的 Git-Bash 无扩展名 `npx` 不会被选中。真正缺失时仍报告
+  `command not found: npx`。
+- **链接规格**：ADR 0038、D624、`07-plugins/04-plugin-security.md`
+- **接受**：质量
+- **里程碑**：M6+
+- **状态**：自动化（`apps/desktop/test/mcp-stdio-launch.test.mjs`）
+
 ### 会话持续性
 
 #### E2E-020：会话在重新启动后仍然存在
@@ -1754,17 +1784,19 @@ task-candidate E2E 从请求工作树运行，但使用主工作区已经准备�
 
 #### E2E-046：PI-Desktop 渲染器品牌和输入框图标边界
 
-- **先决条件**：应用程序在英语和中中文语言环境中运行，并带有
-  空荡荡的家和可用的停靠成绩单。
-- **步骤**：1) 检查展开和折叠的侧边栏。 2) 检查
-  空荡荡的英雄和停靠的输入框。 3) 观察八帧吉祥物 GIF 原地循环，
-  将指针移到其上并确认节奏与几何形状不变。开启减少动态
-  效果并确认显示静止首帧。 4）关注页脚设置和插件
+- **先决条件**：应用程序分别以英语、`zh-CN` 和 `zh-TW` 运行，并带有
+  空首页和可用的停靠成绩单。
+- **步骤**：1) 检查展开和折叠的侧边栏。 2) 在浅色模式检查英语和中文
+  空首页。 3) 切换到深色模式，确认英语使用标准深色动画，`zh-CN` 和
+  `zh-TW` 使用 30 帧中文 GIF。将指针移到吉祥物上，确认节奏和几何形状
+  不变。开启减少动态效果，并确认每种语言和主题组合都显示对应静止图。
+  4）检查停靠输入框、页脚设置和插件
   图标，然后每个 project/Temporary 会话创建控件。 5）打开设置
   和输入框输入。
-- **预期**：可见 shell 标识为 `PI-Desktop`；空荡荡的家英雄
-  渲染与当前主题匹配的 100px `HomeMascotLogo` GIF，首帧短暂停留后循环挥手；
-  指针悬停不改变节奏或几何形状，减少运动时显示对应静止首帧。
+- **预期**：可见 shell 标识为 `PI-Desktop`；空首页英雄渲染与主题和语言
+  匹配的 100px `HomeMascotLogo` GIF。只有深色中文环境使用提供的 30 帧
+  动画，其他组合保留原资源。指针悬停不改变节奏或几何形状，减少动态
+  效果时显示对应静止首帧。
   expanded/collapsed
   侧边栏通过 `BrandLogo` 呈现派生的 `src/assets/brand/logo-*.png` 资源
   并且停靠的输入框提示行没有前导
@@ -3224,16 +3256,18 @@ IPC 请求无法关闭。
      并检查空首页英雄中的浅色八帧 `HomeMascotLogo` GIF。
      将鼠标悬停在吉祥物上并验证节奏不变。
   3. 将主题切换为深色（设置→基础→外观，或系统外观更改）。
-  4. 重新检查相同的表面，无需重新加载。
+  4. 确认英语使用标准深色 GIF；将应用语言切换为 `zh-CN` 和 `zh-TW`，
+     确认无需重新加载即可显示 30 帧中文深色 GIF。开启减少动态效果，
+     确认显示对应的中文静止图。
   5. 切换回光源并重新检查。
 - **预期**：
   - 明暗模式渲染 `src/assets/brand/logo-light.png` /
     `src/assets/brand/logo-dark.png`
     位于侧边栏和启动画面中，无需重新加载窗口。
-- 空首页英雄按当前主题渲染 100 像素的八帧吉祥物 GIF
-    （`home-mascot-light.gif` / `home-mascot-dark.gif`），首帧短暂停留后
-    循环挥手。切换主题时即时更换资源，无需重新加载窗口。指针悬停
-    不改变节奏；减少运动时对应静止首帧仍然可见。
+  - 空首页英雄按当前主题和语言渲染 100 像素的吉祥物 GIF。浅色模式使用
+    `home-mascot-light.gif`；深色模式使用 `home-mascot-dark.gif`，但中文
+    环境使用 `home-mascot-dark-zh.gif`。切换主题或语言时即时更换资源，
+    无需重新加载窗口。指针悬停不改变节奏；减少动态效果时显示对应静止图。
   - 尺寸在主题变化时保持稳定（侧边栏 20 像素、英雄 100 像素、启动栏
     64px），标记保持装饰性，无需点击、键盘或焦点
     行为。
@@ -5386,7 +5420,7 @@ eleven-tool-round desktop paths are verified by
 | M5（聊天文件引用） | E2E-CHAT-shorthand-file-ref-opens-the-matching-file、E2E-CHAT-file-ref-opens-the-surface-that-owns-it |
 | M6+（聊天文件引用） | E2E-PLUGIN-file-view-collapse-persists |
 | M6+（项目文件夹根） | E2E-PLUGIN-file-view-switches-folder-per-project |
-| 后MVP | E2E-022A、E2E-022B、E2E-022C、E2E-024I、E2E-024J、E2E-024K、E2E-024L、E2E-024M（插件路线图 R2/R3/R6） |
+| 后MVP | E2E-PLUGIN-pi-npm-skill-discovery, E2E-022A、E2E-022B、E2E-022C、E2E-024I、E2E-024J、E2E-024K、E2E-024L、E2E-024M（插件路线图 R2/R3/R6） |
 | 基线后本地自动化 | E2E-220 |
 | MVP 后远程控制 | E2E-221、E2E-222、E2E-223、E2E-224、E2E-225、E2E-226、E2E-227、E2E-228、E2E-229、E2E-230、E2E-231、E2E-232 |
 | 受信任扩展（R7 v1） | E2E-DIALOG-long-text-boundaries、E2E-241、E2E-242、E2E-HOOKS-cancel-and-dispose、E2E-243、E2E-244、E2E-245、E2E-PLUGIN-imported-pi-package-skills、E2E-PLUGIN-import-extension-installs-dependencies、E2E-PLUGIN-import-extension-reports-missing-dependency、E2E-PLUGIN-declared-provider-appears-in-the-native-provider-list |
@@ -5568,11 +5602,11 @@ eleven-tool-round desktop paths are verified by
   行，没有 Logo/Home 品牌或 back/forward 按钮。
 
 ### US-UI-17 PI-Desktop 家庭英雄标志
-- 在空聊天主页上，100px `HomeMascotLogo` GIF 在标题上方呈现
-  八帧挥手吉祥物，并在首帧稍作停留。浅色和深色主题各使用一套
-  GIF 和静止 PNG。
-- 指针悬停不改变节奏或几何形状；减少运动时显示对应静止
-  首帧。吉祥物保持装饰性。
+- 在空聊天主页上，100px `HomeMascotLogo` 显示在标题上方。浅色模式和
+  非中文深色模式使用现有八帧 GIF；深色 `zh-CN` 和 `zh-TW` 使用 30 帧
+  中文 GIF 及对应静止图。
+- 主题和语言变化无需重新加载即可选择对应图像。指针悬停不改变节奏或
+  几何形状；减少动态效果时显示对应静止图。吉祥物保持装饰性。
 - 标题为 28px / 粗细为 400；活动项目名称使用点下划线（1 像素，偏移 4 像素）。
 - Composer 不会在有效负载之前渲染附件或 appshot 控件
   首尾相连达到 pi。
@@ -8712,6 +8746,30 @@ the latest destination. These assertions measure work counts, not device FPS.
   宿主 RPC 路径由 `scripts/e2e-smoke.mjs` 覆盖提供商的创建与列举，但没有套件
   驱动手工编辑的 `config_json`。
 
+### E2E-PLUGIN-pi-npm-skill-discovery
+
+- **Preconditions:** Isolated npm package directory and plugin import storage;
+  a package declaring `pi.skills`, optionally executable extensions. No provider.
+- **Steps:** Open Skills, discover the candidate, cancel import, confirm import,
+  read the registered skill body and resources, reload, and attempt a duplicate.
+  Change metadata during confirmation; retry discovery after an error; discover
+  with more than 256 hoisted dependencies and an unreadable scope. Simulate a
+  runtime load failure after host registration and inspect the refreshed state.
+- **Expected:** No implicit import/execution, native explicit consent, preserved
+  resources and runtime skill body, stable imported state, no duplicate import,
+  stale consent refusal, and visible/recoverable errors. Unregistered leftover
+  directories do not count as imports; scoped packages are discovered. Unrelated
+  dependencies and unreadable scopes do not hide healthy skills. A registered
+  import remains marked imported after runtime failure while its error stays visible.
+- **Specs:** 07-plugins/16-trusted-extensions; ADR pi-npm-skill-discovery.
+- **Acceptance:** Plugin skill discovery and explicit trust boundary.
+- **Milestone:** Post-MVP compatibility.
+- **Status:** Automated via `apps/desktop/test/pi-skill-discovery.test.mjs` (real
+  import and plugin child process, native dialog boundary controlled) and
+  `node scripts/e2e-pi-skill-discovery-ui.mjs` (real React/Chromium panel with
+  controlled IPC results). Optional `PI_SKILL_PACKAGE_FIXTURE` points to an
+  unpacked published package for the reported planning-with-files path.
+
 ### E2E-SESSION-temporary-attachment-fork：临时任务预览与独立分支附件
 
 - **步骤**：在没有项目的任务中粘贴超过长文本阈值的内容并发送，点击对话中的附件。
@@ -8792,6 +8850,27 @@ the latest destination. These assertions measure work counts, not device FPS.
 - **自动化**：`node --experimental-strip-types scripts/e2e-scheduled-paths.mjs`
   使用隔离的真实 Host 与 SQLite 配置，不向真实提供商发送推理请求。
 
+### E2E-MARKDOWN-table-actions
+
+- **Setup**: Render a conversation containing two Markdown tables, including
+  aligned columns, formatted text, Chinese text, commas, quotes, and `<br>` cells.
+- **Steps**: Copy the first table; download its CSV; expand it; use copy inside
+  the modal; close with Escape and with Close. Append a streamed row while the
+  preview is open. Repeat the preview at a narrow width in light/dark themes
+  and English/Chinese. Deny clipboard writes at the browser boundary.
+- **Expected**: Actions operate only on their own table. Markdown retains inline
+  syntax and alignment. CSV decodes as UTF-8 and preserves fields and line breaks.
+  The modal fits the viewport, traps focus, updates streamed rows, blocks native
+  work-panel surfaces, and returns focus on dismissal. Narrow previews keep short
+  headers on one line and scroll horizontally; sticky headers fully cover the
+  rows behind them. Failed copies report an
+  error, not success. Existing table wrapping remains intact.
+- **Automated coverage**: `node --test apps/desktop/test/markdown-table.test.mjs`
+  and `node scripts/test-markdown-table.mjs` after building the desktop. The
+  latter mounts the production Markdown component in an isolated Electron
+  window and exercises real clipboard/download boundaries. It does not call a
+  model or use the user's app profile.
+
 ## 原生搜索续跑契约（离线 sidecar）
 
 **范围：** ADR 0297；供应商原生搜索内容、估算、本地工具、Task 委派及历史恢复。不调用真实模型或搜索服务。
@@ -8815,6 +8894,22 @@ the latest destination. These assertions measure work counts, not device FPS.
 
 **证据：** 记录构建和测试退出码、基线 SHA、依赖版本、产物标识及独立评审，报告位于
 `docs/project/hosted-search-contract-verification.md`。不得记录真实会话或凭据。未执行明确标为 NOT RUN，不得标为 PASS。
+
+### E2E-CHAT-fork-completed-reply-while-running
+
+- **Preconditions:** Isolated real desktop profile, configured model, two turns
+  in one Desktop conversation; the first assistant reply has completed.
+- **Steps:** Send the second prompt. While it is still running, click **Branch
+  from this reply** on the first reply. Continue chatting in the child, then
+  return to the parent.
+- **Expected:** The child contains only history through the first reply, can
+  continue independently, and starts with no running turn. The parent keeps
+  running and retains its second prompt and reply. No live tail is overwritten.
+  A whole-session fork and a fork within the active tool loop remain rejected.
+  A navigation during the fork response records the child without stealing focus.
+- **Coverage:** Host fork regression, renderer session-fork-running tests,
+  session IPC contract tests, and real-model desktop acceptance. A local model
+  fixture or mocked component result is not real-model acceptance evidence.
 
 ### E2E-HOOKS-cancel-and-dispose
 

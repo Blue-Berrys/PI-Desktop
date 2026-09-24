@@ -879,8 +879,11 @@ ID、或会话无法解析出默认目标时，得到 `supportsReasoning: false`
 `session/fork` 是一个协议 v5 通道，可创建独立的
 来自源会话当前活动记录的会话。当可选时
 `throughMessageId` 存在，复制的快照以该消息结束；一个
-未知 ID 返回 `NOT_FOUND`。 Electron 拒绝
-当该源会话处于活动状态时，使用 `AGENT_BUSY` 发出请求。
+Unknown ids return `NOT_FOUND`. A running Desktop source may fork a completed
+assistant prefix that contains no messages owned by a running turn. The host
+checks this under its RPC lock. Whole-session and active-turn forks remain
+`AGENT_BUSY`; native Pi keeps its idle/ownership guard. The source continues
+running without renderer history hydration replacing its live tail.
 Electron拥有本地化并提供面向用户的分支名称；主机
 后备标题是为非 UI 调用者保留的。
 主机分配新的会话 ID、消息 ID 和工具调用 ID；它复制

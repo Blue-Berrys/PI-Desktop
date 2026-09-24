@@ -217,6 +217,14 @@ export const de = {
     sessionMissing: "Diese Sitzung existiert nicht mehr",
   },
   "chat": {
+    "tableActions": "Tabellenaktionen",
+    "copyTableMarkdown": "Tabelle als Markdown kopieren",
+    "exportTableCsv": "Tabelle als CSV herunterladen",
+    "tablePreview": "Tabelle vergrößern",
+    "closeTablePreview": "Tabellenvorschau schließen",
+    "tableCopied": "Tabelle kopiert",
+    "tableCopyFailed": "Tabelle konnte nicht kopiert werden",
+    "tableExportFailed": "Tabelle konnte nicht heruntergeladen werden",
     imagePreview: {
       title: "Bildvorschau",
       download: "Bild herunterladen",
@@ -570,6 +578,9 @@ export const de = {
     "dismiss": "Verwerfen"
   },
   "settings": {
+    "power": "Energie",
+    "keepAwakeWhileRunning": "Computer wach halten",
+    "keepAwakeWhileRunningDesc": "Verhindert den Ruhezustand bei Inaktivität, solange PI-Desktop läuft. Der Bildschirm kann sich ausschalten; manuelles Schlafen und Zuklappen bleiben möglich.",
     "imageModel": "Bildgenerierungsmodell",
     "imageModelUnset": "Nicht konfiguriert",
     "imageModelUnavailable": "Derzeit nicht verfügbar",
@@ -1714,7 +1725,7 @@ sklm: {
     "subagent": "Unteragent",
     "subagentTask": "Aufgabe",
     "subagentTaskEmpty": "Keine Aufgabenbeschreibung.",
-    "subagentClose": "Unteragent-Details schließen",
+    "subagentReadOnly": "Unteragenten werden vom Haupt-Agenten gesteuert — eine Eingabe ist nicht möglich.",
     "subagentEmpty": "Die Unteragent-Details sind nicht mehr verfügbar.",
     "resize": "Größe des Arbeitsfensters ändern",
     "maximize": "Expand work panel",
@@ -1730,7 +1741,8 @@ sklm: {
       "review": "Überprüfen",
       "browser": "Browser",
       "file": "Dateien",
-      "plugin": "Plugin-Ansicht"
+      "plugin": "Plugin-Ansicht",
+      "subagent": "Subagent"
     },
     "pluginView": {
       "failed": "Diese Ansicht konnte nicht geladen werden. Laden Sie das Plugin neu und versuchen Sie es erneut."
@@ -1800,6 +1812,16 @@ sklm: {
     "title": "Erweiterungen",
     "loadDev": "Lokales Plugin laden",
     "loadDevDone": "Lokales Plugin geladen",
+    piSkillsTitle: "Skills aus pi CLI",
+    piSkillsHint: "Installierte npm-Pakete werden nur gelesen. Importieren Sie nur vertrauenswürdige Pakete; verwalten Sie sie anschließend unter Plugins.",
+    piSkillsConfirm: "Dieses pi-Paket importieren und aktivieren?",
+    piSkillsExecutable: "Dieses Paket enthält ausführbare Erweiterungen. Der Import aktiviert vertrauenswürdigen Code im Agenten und installiert möglicherweise Abhängigkeiten.",
+    piSkillsPromptOnly: "Dieses Paket fügt dem Agenten Anweisungen hinzu. Ressourcen werden kopiert; deklarierte Abhängigkeiten werden gegebenenfalls installiert.",
+    piSkillsImport: "Importieren und aktivieren",
+    piSkillsImported: "Bereits importiert",
+    piSkillsRefresh: "pi-CLI-Skills aktualisieren",
+    piSkillsEmpty: "Keine pi-CLI-npm-Skill-Pakete gefunden.",
+    piSkillsLoading: "pi-CLI-Skills werden gesucht…",
     "importExtension": "pi-Erweiterung importieren",
     "importExtensionDone": "Als Plugin {{id}} importiert",
     "importExtensionDepsFailed": "Als Plugin {{id}} importiert, aber die Abhängigkeiten konnten nicht installiert werden: {{error}}",
@@ -2166,6 +2188,11 @@ sklm: {
       "idHint": "Präfixe seiner Werkzeugnamen; kann später nicht mehr geändert werden.",
       "command": "Befehl",
       "commandHint": "Eine ausführbare Datei in Ihrem PATH oder ein absoluter Pfad.",
+      "commandHintNpx": "Verwendet Node.js aus PATH, der offiziellen Installation, fnm, nvm oder Volta.",
+      "commandHintUvx": "Verwendet uv aus PATH oder dem Standard-Installationsort.",
+      "launcherCustom": "Benutzerdefiniert",
+      "commandPath": "Programmdatei",
+      "commandPlaceholder": "npx oder ein absoluter Pfad",
       "args": "Argumente",
       "argsHint": "Eine Zeile, wie in der README-Datei abgedruckt. Zitate werden respektiert.",
       "env": "Umgebungsvariablen",
