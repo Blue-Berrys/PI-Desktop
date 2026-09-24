@@ -102,6 +102,13 @@ pi-ai 去发出 `x-opencode-session`。每个提供商行（AI 服务或 OAuth �
 见 ADR 0256 / #296）。官方 `deepseek.com` 行仍使用空串回填（#223）。该覆盖不改
 `thinkingFormat`。
 
+当 models.dev 记录发布了推理 `effort` 选项且没有 `budget_tokens` 选项时
+（例如 Opus 4.7+、Opus 5.x、Fable），Anthropic Messages 请求会设置
+`forceAdaptiveThinking: true`。这些模型会以 HTTP 400 拒绝
+`thinking.type=enabled`，而 models.dev 不携带 pi-ai 的 compat 记录，缺少该标志时
+pi-ai 会回落到 budget 思考。仍发布 `budget_tokens` 的模型保持 budget 思考，显式的
+目录 `compat` 记录会被保留。
+
 ## 5. 内置供应商矩阵（发货意图）
 
 > 确切的可用性取决于引脚版本的 pi-ai 支持；产品必须公开所有受支持的产品，并为其余产品保持与 OpenAI 兼容的路径开放。
@@ -201,17 +208,19 @@ PI-Desktop 不得把用户永久限制在一份简短的固定模型列表上。
 10. 设置里的复选框展示的是相对于已发布基线的有效答案；把某一项设回已发布的
     值，存下来的是"跟随目录"，而不是一个取值相同的覆盖。因此与 models.dev
     保持一致本身就是重置，不需要另外的重置控件，也不需要逐项能力的解释文案。
-10a. `nativeWebSearch` 是两态的主动开启（缺省即关闭；没有目录基线，因为
-    models.dev 不发布托管工具能力）。启用且模型解析后的线路 API 是
-    `anthropic-messages`、`openai-responses` 或 `azure-openai-responses`
-    （存储的 apiStyle 为 `anthropic_messages` / `responses`）时，适配器会
-    附加提供商托管的联网搜索工具（`web_search_20250305` / `web_search`），
-    把搜索活动提取为 `UiMessage.hostedSearch`（`rounds` 用于展示，`replay`
-    用于 convertMessages），并在后续回合——包括重启之后——回放这些原始
-    搜索块（ADR 0297）。提供商接口风格不属于这两种时复选框禁用。不支持
-    该工具的网关会把提供商错误暴露出来；处理方式是取消勾选。搜索在提供商
-    侧执行：没有本地抓取，也没有权限询问。压缩保持既有的前缀/尾部保留策略；
-    摘要请求包含被压缩前缀中的搜索回放数据，但生成的文本摘要不是原始搜索块的无损副本。
+10a. `nativeWebSearch` 是两态主动开启（缺省即关闭；models.dev 不发布托管工具能力，
+    因此没有目录默认值）。启用后，当模型解析到 `anthropic-messages`、
+    `openai-responses`、`azure-openai-responses` 或 `openai-codex-responses`
+    （存储的 apiStyle 为 `anthropic_messages`、`responses` 或
+    `openai_codex_responses`，或从 Chat Completions 解析到已确认的官方搜索路径）时，适配器附加提供商托管搜索工具
+    （`web_search_20250305` / `web_search`），将活动写入
+    `UiMessage.hostedSearch`，并在后续回合（含重启后）回放原始数据（ADR 0297）。
+    OpenAI OAuth 使用独立的 Codex Responses 适配器和 ChatGPT 订阅端点，不是公开的
+    `/v1/responses`；搜索工具写入 Codex 请求体顶层 `tools`。设置仍需用户逐模型
+    勾选；运行时还会按最终解析的 wire API 校验，旧配置不会把工具带给不支持的适配器。
+    不支持工具的网关会显示提供商错误，用户可取消勾选。搜索由提供商执行，没有
+    本地抓取或权限询问。压缩仍按既有前缀/尾部策略保留；摘要请求含被压缩前缀的
+    搜索回放，但生成的文本摘要不是原始搜索块的无损副本。
 11. `ModelInfo` 是设置界面用来对照的已发布记录，因此已存储的 binding 不得
     塑造它的能力或推理字段。有效上限、推理与思考级别都通过那个确切的 binding
     解析；有效的传输模态数组还会额外套用显式的附件覆盖。
@@ -672,3 +681,11 @@ OpenAI Responses 适配器必须把 `response.completed`（以及
 已知目标模型时，估算遵守该适配器既有的模型切换回放边界。压缩序列化把搜索投影传入摘要请求，
 不伪装成客户端工具调用。被压缩前缀转为生成的文本摘要；保留尾部中的原始搜索仍按既有规则回放，
 不承诺摘要无损保留原始搜索块。
+
+### 搜索配置引导
+
+搜索开关与运行时共用请求路由判断。官方 DeepSeek、xAI 和旧 OpenAI Chat Completions
+配置开启搜索后，内部使用已确认的搜索接口，不增加第二个服务，不改写连接设置。
+其他模型及关闭搜索的请求继续使用原协议，搜索默认关闭。路由只匹配精确来源和路径，
+不根据展示名称或模型名推断。最终适配器继续负责搜索解析和历史回放。
+未集成格式显示“应用尚未适配”，不冒充厂商能力结论。详见提供商配置规格。

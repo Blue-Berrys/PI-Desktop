@@ -1,5 +1,10 @@
 # Unreleased changes
 
+- Subagent topology cards and their live process rows now follow the main
+  conversation's responsive width behavior: long descriptions, paths,
+  commands, and summaries wrap inside the dock instead of requiring repeated
+  divider dragging to read them.
+
 - Resuming a subagent no longer selects another definition's private model
   binding. On-demand delegation permissions are checked again on the next parent
   turn, so revoking automatic delegation takes effect without restarting the runtime.
@@ -31,3 +36,6 @@
 - Hovering a reasoning stop or its label highlights the corresponding label.
   Only unfilled dots brighten and enlarge; filled dots and the current thumb
   keep their appearance.
+- OpenAI Codex OAuth models can now opt into provider-hosted native web search.
+  The feature remains off by default and search history is replayed only for
+  the same Codex model.

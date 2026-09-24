@@ -1,4 +1,4 @@
-# ADR 0306: Add selected transcript text to the conversation draft
+# ADR 0307: Add selected transcript text to the conversation draft
 
 - Status: Proposed
 - Date: 2026-09-23
