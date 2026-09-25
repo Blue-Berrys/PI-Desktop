@@ -62,10 +62,11 @@ export function ImportSection() {
         options={IMPORT_KINDS.map((entry) => ({
           value: entry.id,
           label: t(entry.labelKey),
+          id: `import-tab-${entry.id}`,
+          controls: `import-panel-${entry.id}`,
         }))}
         label={t("settings.import")}
         role="tablist"
-        idPrefix="import"
         className="import-segment"
         itemClassName="import-segment-btn"
       />

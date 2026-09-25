@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { DEEPSEEK_REASONING_REPLAY_PLACEHOLDER } from "@pi-desktop/shared";
 import type { ModelAuth } from "@earendil-works/pi-ai";
 import { convertMessages } from "@earendil-works/pi-ai/api/openai-completions";
-import { modelConfigWithBinding } from "./model-capabilities.js";
+import { genericModelConfig, modelConfigWithBinding } from "./model-capabilities.js";
 import type { ModelConfig } from "./thinking-level.js";
 import {
   apiBindingForStyle,
@@ -152,6 +152,40 @@ describe("Anthropic adaptive thinking from models.dev reasoning options", () => 
         { type: "effort", values: ["low", "medium", "high", "xhigh", "max"] },
       ]),
     );
+
+    expect(request?.thinking).toMatchObject({ type: "adaptive" });
+    expect(request?.thinking).not.toHaveProperty("budget_tokens");
+    expect(request?.output_config).toEqual({ effort: "medium" });
+  });
+
+  it("sends adaptive thinking when an unidentified gateway keeps only the Anthropic wire shape", async () => {
+    const fallback = genericModelConfig("claude-opus-5-5", "https://gateway.example");
+    const modelConfig = modelConfigWithBinding(
+      {
+        ...fallback,
+        reasoningOptions: [
+          { type: "effort", values: ["low", "medium", "high", "xhigh", "max"] },
+        ],
+        thinkingLevelMap: {
+          low: "low",
+          medium: "medium",
+          high: "high",
+          xhigh: "xhigh",
+          max: "max",
+          off: null,
+        },
+      },
+      {
+        contextWindow: 1_000_000,
+        maxTokens: 128_000,
+        thinkingLevels: ["off", "low", "medium", "high"],
+      },
+    );
+    const request = await thinkingRequest({
+      ...anthropicProvider("claude-opus-5-5", modelConfig.reasoningOptions),
+      baseUrl: "https://gateway.example",
+      modelConfig,
+    });
 
     expect(request?.thinking).toMatchObject({ type: "adaptive" });
     expect(request?.thinking).not.toHaveProperty("budget_tokens");

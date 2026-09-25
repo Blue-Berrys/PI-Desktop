@@ -122,7 +122,8 @@ over-long alias with `MODEL_ALIAS_TOO_LONG`.
 
 `models[].contextWindowSource` records where the stored `contextWindow` came
 from. `catalog` marks a models.dev snapshot that a later catalog correction may
-replace; `user` marks a number entered in Settings and is never replaced. The
+replace (a lookup that falls back to the generic shape is not a correction);
+`user` marks a number entered in Settings and is never replaced. The
 property is optional, so a config written before the marker stays readable and
 older clients ignore it. Host-core keeps only those two values and drops anything
 else, so an unreadable marker cannot turn into a third state. The resolution rule

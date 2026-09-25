@@ -2749,9 +2749,12 @@ reasoning-level control.
   `.composer-toolbar` spacing, minimum heights, theme surfaces, and controls.
   Only the parent placement and the localized placeholder copy differ between
   the empty home and a recorded conversation. In a recorded conversation,
-  `.composer-dock-docked` paints the primary workspace background across its
-  full width. This occlusion band prevents transcript rows from remaining
-  visible beneath the floating shell or through its rounded outer corners.
+  `.composer-dock-docked` paints no backing of its own: `.thread-scroll` masks
+  its own content out across the trailing reserve the transcript holds below
+  the Composer's measured height, so rows fade at the Composer boundary instead
+  of remaining visible beneath the floating shell or through its rounded outer
+  corners, and the conversation pane's own surface stays visible behind the
+  dock (issue #728, D624).
 - Empty draft height: `.composer-input` uses `min-height: 3lh`, so an idle
   composer shows three lines of input before it grows with the draft.
 - Scroll stability: The thread scrollport reserves one stable trailing gutter,
@@ -3852,7 +3855,9 @@ Sidebar footer                                        Popover (360px max)
   surface it again.
 - Mark all read is idempotent and preserves rows; it dismisses every outstanding
   task-native banner. Clear deletes every inbox row, dismisses all task-native
-  banners, and leaves sessions, transcripts, and turns intact.
+  banners, and leaves sessions, transcripts, and turns intact. These actions
+  remain available for successful completions hidden from the failure-only
+  bell list, so the taskbar unread badge can be cleared from the popover.
 - `notification.changed` updates the visible list and badge only for a new
   durable id. A duplicate id, or a delayed event for an acknowledged/cleared
   row, is ignored. Opening the

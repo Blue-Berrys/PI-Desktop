@@ -115,6 +115,16 @@ compat record, so without the flag pi-ai would fall back to budget thinking.
 Models that still publish `budget_tokens` keep budget thinking, and an
 explicit catalog `compat` record is preserved.
 
+An Anthropic Messages row the catalog cannot identify (for example a custom
+gateway URL serving an id several publishers list) still falls back to the
+generic model shape, but takes `reasoning_options` and the derived
+`thinkingLevelMap` from Anthropic's own models.dev record when that record
+has exactly the same model id. Which thinking shape a Claude id accepts is a
+property of the model, not of the deployment, so only those two fields
+transfer; limits and modalities stay generic, and aliases, renamed ids, other
+wire APIs, and non-Claude ids served over the Anthropic protocol are unchanged
+(#990).
+
 ## 5. Built-in vendor matrix (ship intent)
 
 > Model metadata follows the bundled/in-memory models.dev catalog. Provider adapters remain

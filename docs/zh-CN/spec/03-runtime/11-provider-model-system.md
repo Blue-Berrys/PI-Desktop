@@ -109,6 +109,13 @@ pi-ai 去发出 `x-opencode-session`。每个提供商行（AI 服务或 OAuth �
 pi-ai 会回落到 budget 思考。仍发布 `budget_tokens` 的模型保持 budget 思考，显式的
 目录 `compat` 记录会被保留。
 
+目录无法识别的 Anthropic Messages 行（例如某个自定义网关 URL 提供多家发布方都列出的
+模型 ID）仍回退到通用模型形状，但当 Anthropic 自己的 models.dev 记录中存在完全相同的
+模型 ID 时，会采用该记录的 `reasoning_options` 及派生的 `thinkingLevelMap`。Claude
+模型接受哪种思考形状是模型本身的属性，而非部署的属性，因此只迁移这两个字段；上下文与
+模态限制保持通用值，别名、改名后的 ID、其他 wire API，以及通过 Anthropic 协议提供的
+非 Claude 模型均不受影响（#990）。
+
 ## 5. 内置供应商矩阵（发货意图）
 
 > 确切的可用性取决于引脚版本的 pi-ai 支持；产品必须公开所有受支持的产品，并为其余产品保持与 OpenAI 兼容的路径开放。

@@ -11,12 +11,10 @@
 import { readSettingsSourceSync } from "./helpers/source-contracts.mjs";
 import { loadStylesSync } from "./helpers/styles.mjs";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const settings = readSettingsSourceSync();
 const styles = loadStylesSync();
-const sharedUi = readFileSync(new URL("../src/components/ui.tsx", import.meta.url), "utf8");
 
 const start = settings.indexOf(" * Settings ▸ Import.");
 assert.ok(start > 0, "import page module missing from the settings domain");
@@ -32,8 +30,8 @@ function cssRule(selector) {
 test("import is one workbench per kind instead of four stacked scan cards", () => {
   // One tab strip owns the four kinds; each kind gets one panel behind it.
   assert.match(page, /role="tablist"/);
-  assert.match(page, /idPrefix="import"/);
-  assert.match(sharedUi, /"aria-controls": idPrefix \? `\$\{idPrefix\}-panel-\$\{option\.value\}`/);
+  assert.match(page, /id: `import-tab-\$\{entry\.id\}`/);
+  assert.match(page, /controls: `import-panel-\$\{entry\.id\}`/);
   assert.match(page, /aria-labelledby={`import-tab-\$\{entry\.id\}`}/);
 
   // One toolbar and one idle state per kind — not per section or per step.

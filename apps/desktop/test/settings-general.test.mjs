@@ -161,10 +161,10 @@ test("Basics and AI tabs expose their respective app and AI controls", () => {
   // The AI tab keeps the Settings picker control: a native <select> popup is
   // platform-drawn and cannot carry the shared menu surface or its check mark.
   assert.doesNotMatch(aiSource, /<select/);
-  // Speech is not a Settings surface: the AI tab renders no voice card, search
-  // indexes no speech keys, its styles are gone, and the host capability keeps
-  // its IPC contract (ADR 0291).
-  assert.doesNotMatch(aiSource, /VoiceSettingsSection|voice-settings/);
+  // Voice owns a separate destination; the AI tab does not duplicate it.
+  assert.doesNotMatch(aiSource, /VoiceSettingsCard|VoiceSettingsSection|voice-settings/);
+  assert.match(settingsPageSource, /tab === "voice" && settings && [\s\S]*?<VoiceSettingsSection/);
+
   assert.doesNotMatch(settingsSearchSource, /settings\.speech/);
   assert.doesNotMatch(stylesSource, /\.settings-speech/);
   assert.doesNotMatch(enLocaleSource, /speechTitle:|speechVoicePlaceholder:/);
@@ -214,6 +214,7 @@ test("basics gates developer tools behind a persisted developer mode", () => {
   assert.match(developerSource, /saveSettings\(\{ developerMode: !enabled \}\)/);
   assert.match(developerSource, /api\.toggleDevTools\(true\)/);
   assert.match(developerSource, /disabled=\{!enabled\}/);
+
   for (const key of [
     "settings.developer",
     "settings.developerMode",

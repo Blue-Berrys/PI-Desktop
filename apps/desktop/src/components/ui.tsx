@@ -689,18 +689,20 @@ export function SegmentedControl<T extends string>({
   options,
   label,
   role = "radiogroup",
-  idPrefix,
   className,
   itemClassName,
   disabled,
 }: {
   value: T;
   onChange: (value: T) => void;
-  options: readonly { readonly value: T; readonly label: ReactNode }[];
+  options: readonly {
+    readonly value: T;
+    readonly label: ReactNode;
+    readonly id?: string;
+    readonly controls?: string;
+  }[];
   label: string;
   role?: "group" | "radiogroup" | "tablist";
-  /** Stable tab/panel IDs for a tablist with matching `${idPrefix}-panel-*` panels. */
-  idPrefix?: string;
   className?: string;
   itemClassName?: string;
   disabled?: boolean;
@@ -717,9 +719,7 @@ export function SegmentedControl<T extends string>({
           key={option.value}
           type="button"
           {...(itemRole === "tab"
-            ? { role: "tab", id: `${idPrefix ?? label}-tab-${option.value}`,
-                "aria-controls": idPrefix ? `${idPrefix}-panel-${option.value}` : undefined,
-                "aria-selected": value === option.value }
+            ? { role: "tab", id: option.id ?? `${label}-tab-${option.value}`, "aria-controls": option.controls, "aria-selected": value === option.value }
             : itemRole === "radio"
               ? { role: "radio", "aria-checked": value === option.value }
               : { "aria-pressed": value === option.value })}

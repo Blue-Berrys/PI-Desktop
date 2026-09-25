@@ -200,9 +200,10 @@ test("every image gate reads the override-shaped model config", () => {
 });
 
 test("a model the catalog does not describe still reports its binding overrides", () => {
-  // Both enrichment helpers fall back to the generic shape and then apply the
-  // binding, matching the launch path; returning undefined instead would report
-  // no image support for a hand-typed id whose transport does inline images.
+  // Both enrichment helpers use the same catalog-or-generic resolver and then
+  // apply the binding, matching the launch path; returning undefined instead
+  // would report no image support for a hand-typed id whose transport does
+  // inline images.
   const providerBlock = providerCatalogSource.slice(
     providerCatalogSource.indexOf("const enrichProvider ="),
     providerCatalogSource.indexOf("const normalizeThinkingLevel ="),
@@ -216,7 +217,7 @@ test("a model the catalog does not describe still reports its binding overrides"
   );
   for (const block of [providerBlock, sessionBlock]) {
     assert.match(block, /modelConfigWithBinding\(/);
-    assert.match(block, /genericModelConfig\(modelId, provider\.baseUrl \?\? ""\)/);
+    assert.match(block, /catalogModelConfigFor\(modelsDevCatalog/);
     assert.match(block, /bindingForModel\(provider, modelId\)/);
   }
   assert.doesNotMatch(

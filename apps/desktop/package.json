@@ -1,6 +1,6 @@
 {
   "name": "@pi-desktop/desktop",
-  "version": "0.15.6",
+  "version": "0.15.7-beta.1",
   "desktopName": "pi-desktop.desktop",
   "private": true,
   "description": "PI-Desktop Electron application",
@@ -217,6 +217,12 @@
           "arch": [
             "x64"
           ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
         }
       ],
       "icon": "build/icon.ico",
@@ -236,6 +242,9 @@
       "allowToChangeInstallationDirectory": true,
       "shortcutName": "PI-Desktop",
       "artifactName": "PI-Desktop-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "PI-Desktop-Portable-${version}.${ext}"
     },
     "deb": {
       "packageName": "pi-desktop",

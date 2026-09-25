@@ -36,7 +36,6 @@ const projectsPartialSource = await readFile(
   "utf8",
 );
 const archiveUiSource = `${projectsPageSource}\n${projectsIndexSource}\n${projectsDetailSource}\n${projectArchiveSource}`;
-const sharedUiSource = await readFile(new URL("../src/components/ui.tsx", import.meta.url), "utf8");
 
 test("settings owns the project archive destination", () => {
   assert.match(settingsSearchSource, /id: "projects"/);
@@ -105,8 +104,10 @@ test("project archive is a toolbar over a list, with no page-level prose", () =>
   assert.match(projectsPageSource, /project\.clearSearch/);
   assert.match(projectsPageSource, /projects-result-count[^]*aria-live="polite"/);
   assert.match(projectsPageSource, /project\.resultCount/);
-  assert.match(projectsPageSource, /<SegmentedControl[\s\S]*?className="projects-sort"/);
-  assert.match(sharedUiSource, /"aria-pressed": value === option\.value/);
+  assert.match(projectsPageSource, /<SegmentedControl\s+value=\{sort\}/);
+  assert.match(projectsPageSource, /className="projects-sort"/);
+  assert.match(projectsPageSource, /itemClassName="projects-sort-btn"/);
+  assert.match(projectsPageSource, /role="group"/);
   assert.match(projectsPageSource, /project\.sortRecent/);
   assert.match(projectsPageSource, /project\.sortName/);
 

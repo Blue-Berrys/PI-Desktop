@@ -108,7 +108,7 @@ test("the combined chip and menu meet the compact accessible visual contract", (
   assert.match(stylesSource, /@media \(prefers-reduced-motion: reduce\)/);
 });
 
-test("model options are visually nested under their provider heading", () => {
+test("model options share the compact provider heading inset", () => {
   assert.match(composerSource, /composer-plus-item composer-model-option/);
   assert.match(
     stylesSource,
@@ -126,11 +126,11 @@ test("model groups use the account-aware display name", () => {
 test("provider headings establish a stronger type level than model rows", () => {
   assert.match(
     stylesSource,
-    /\.composer-model-group-label\s*\{[\s\S]*?font-size:\s*var\(--text-md\)/,
+    /\.composer-model-group-label\s*\{[^}]*font-size:\s*var\(--text-xs-plus\)[^}]*font-weight:\s*var\(--font-weight-strong\)/,
   );
   assert.match(
     stylesSource,
-    /\.composer-model-group \.composer-model-option\s*\{[\s\S]*?font-size:\s*var\(--text-sm\)[\s\S]*?font-weight:\s*var\(--font-weight-normal\)/,
+    /\.composer-model-group \.composer-model-option\s*\{[^}]*font-size:\s*var\(--text-sm\)[^}]*font-weight:\s*var\(--font-weight-normal\)/,
   );
   assert.match(
     stylesSource,

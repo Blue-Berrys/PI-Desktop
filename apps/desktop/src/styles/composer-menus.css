@@ -544,9 +544,8 @@
   text-transform: none;
 }
 
-/* Model rows sit at one tab stop below their provider heading, so groups keep
-   a clear parent → child hierarchy without changing the option's label. The
-   smaller normal-weight text keeps the provider heading as the visual anchor. */
+/* Model rows share the provider heading's compact inset. Normal-weight option
+   text stays distinct from the stronger provider heading. */
 .composer-model-group .composer-model-option {
   padding-left: 8px;
   font-size: var(--text-sm);

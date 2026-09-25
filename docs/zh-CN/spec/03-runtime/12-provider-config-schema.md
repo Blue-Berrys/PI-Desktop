@@ -137,7 +137,7 @@ JSON、根节点非对象、`models` 非数组，或任一条目不可读，都�
 `MODEL_BINDINGS_DEGRADED` 拒绝显式替换模型数组；不涉及模型数组的提供商字段仍可更新。
 
 `models[].contextWindowSource` 记录存储的 `contextWindow` 来自哪里：`catalog` 表示
-models.dev 快照，之后的目录修正可以替换它；`user` 表示用户在设置中手改的值，永不被
+models.dev 快照，之后的目录修正可以替换它（查询未命中而回退到通用形状不算修正）；`user` 表示用户在设置中手改的值，永不被
 替换。该字段可选，因此早于该标记写出的配置仍可读，旧客户端会忽略它。host-core 只
 保留这两个取值、丢弃其它值，避免出现第三种无人识别的状态。解析规则见
 [13-model-catalog-and-selection](13-model-catalog-and-selection.md) §9.1。
