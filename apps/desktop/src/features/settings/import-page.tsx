@@ -65,6 +65,7 @@ export function ImportSection() {
         }))}
         label={t("settings.import")}
         role="tablist"
+        idPrefix="import"
         className="import-segment"
         itemClassName="import-segment-btn"
       />

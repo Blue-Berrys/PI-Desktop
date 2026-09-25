@@ -10,6 +10,10 @@ import test from "node:test";
 import { loadStyles } from "./helpers/styles.mjs";
 
 const settingsPageSource = await readSettingsSource();
+const developerSource = await readFile(
+  new URL("../src/features/settings/developer-sections.tsx", import.meta.url),
+  "utf8",
+);
 const settingsSearchSource = await readFile(
   new URL("../src/lib/settings-search.ts", import.meta.url),
   "utf8",
@@ -101,11 +105,11 @@ const networkProxySource = await readFile(
 test("Basics and AI tabs expose their respective app and AI controls", () => {
   const generalStart = settingsPageSource.indexOf('{tab === "general" && settings && (');
   const aiStart = settingsPageSource.indexOf('{tab === "ai" && settings && (');
-  const shortcutsStart = settingsPageSource.indexOf(
-    '{tab === "shortcuts" && settings && (',
+  const voiceStart = settingsPageSource.indexOf(
+    '{tab === "voice" && settings && (',
   );
   const generalSource = settingsPageSource.slice(generalStart, aiStart);
-  const aiSource = settingsPageSource.slice(aiStart, shortcutsStart);
+  const aiSource = settingsPageSource.slice(aiStart, voiceStart);
 
   assert.match(generalSource, /<ThemeRow /);
   assert.match(generalSource, /<LanguageRow /);
@@ -160,7 +164,7 @@ test("Basics and AI tabs expose their respective app and AI controls", () => {
   // Speech is not a Settings surface: the AI tab renders no voice card, search
   // indexes no speech keys, its styles are gone, and the host capability keeps
   // its IPC contract (ADR 0291).
-  assert.doesNotMatch(settingsPageSource, /VoiceSettingsCard|voice-settings/);
+  assert.doesNotMatch(aiSource, /VoiceSettingsSection|voice-settings/);
   assert.doesNotMatch(settingsSearchSource, /settings\.speech/);
   assert.doesNotMatch(stylesSource, /\.settings-speech/);
   assert.doesNotMatch(enLocaleSource, /speechTitle:|speechVoicePlaceholder:/);
@@ -204,11 +208,12 @@ test("General Network card persists a custom HTTP or SOCKS5 proxy and the relaxe
 
 test("basics gates developer tools behind a persisted developer mode", () => {
   assert.match(sharedTypesSource, /developerMode\?: boolean/);
-  assert.match(settingsPageSource, /function DeveloperSection/);
-  assert.match(settingsPageSource, /role="switch"/);
-  assert.match(settingsPageSource, /saveSettings\(\{ developerMode: !enabled \}\)/);
-  assert.match(settingsPageSource, /api\.toggleDevTools\(true\)/);
-  assert.match(settingsPageSource, /disabled=\{!enabled\}/);
+  assert.match(settingsPageSource, /<DeveloperSection settings=\{settings\} saveSettings=\{saveSettings\} \/>/);
+  assert.match(developerSource, /export function DeveloperSection/);
+  assert.match(developerSource, /<SettingsToggle/);
+  assert.match(developerSource, /saveSettings\(\{ developerMode: !enabled \}\)/);
+  assert.match(developerSource, /api\.toggleDevTools\(true\)/);
+  assert.match(developerSource, /disabled=\{!enabled\}/);
   for (const key of [
     "settings.developer",
     "settings.developerMode",

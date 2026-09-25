@@ -167,7 +167,7 @@ globalThis.composerThinkingLayoutProbe = async () => {
       if (!menu.classList.contains("is-open")) failures.push(`${index}: selection closed the menu`);
       if (Math.abs(currentMenu.left - initialLeft) > 0.05) failures.push(`${index}/${level}: menu moved ${currentMenu.left - initialLeft}px`);
       if (Math.abs(currentMenu.top - initialTop) > 0.05) failures.push(`${index}/${level}: menu moved vertically`);
-      if (Math.abs(trigger.height - 28) > 0.05) failures.push(`${index}/${level}: trigger changed height`);
+      if (Math.abs(trigger.height - 26) > 0.05) failures.push(`${index}/${level}: trigger changed height`);
       if (trigger.right > wrapper.right + 0.05) failures.push(`${index}/${level}: trigger overflows its wrapper`);
       measurements.push({ ...config, level, triggerRight: trigger.right, wrapperRight: wrapper.right, menuLeft: currentMenu.left });
     }

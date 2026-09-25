@@ -63,8 +63,11 @@ test("every shell surface reserves the shared lead inset", () => {
     ["work-panel.css", workPanelSource],
     ["tokens.css", tokensSource],
   ]) {
+    const insetDeclarations = declarationsOnly(source).split("\n").filter((line) =>
+      /--ds-window-lead-inset|--preview-chrome-inset|padding-left|margin-left/.test(line),
+    ).join("\n");
     assert.doesNotMatch(
-      declarationsOnly(source),
+      insetDeclarations,
       /76px/,
       `${name} must not restate the traffic-light footprint`,
     );

@@ -265,8 +265,6 @@
   max-height: 280px;
   flex-direction: column;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--ds-border-default) transparent;
 }
 
 /* Reasoning slider (issue #417): the menu root carries the slider directly
@@ -524,8 +522,6 @@
 .composer-model-list {
   max-height: 280px;
   overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--ds-border-default) transparent;
 }
 
 .composer-model-group-label {

@@ -250,6 +250,7 @@ export function RemoteHostsPage() {
             ]}
             label={t("settings.remoteHosts.addTitle")}
             role="tablist"
+            idPrefix="remote-host-add"
             disabled={busy}
           />
         </div>

@@ -1234,6 +1234,7 @@ Implementation: `components/ui.tsx → SegmentedControl<T>`.
 | Item roles | `radio` / none / `tab` — derived from container role |
 | Generic | `<T extends string>` for type-safe value/onChange |
 | Options | `readonly { value: T; label: ReactNode }[]` — label accepts JSX (e.g. count badge) |
+| Tab panels | `idPrefix` gives each tab a stable `${idPrefix}-tab-${value}` ID and matching `${idPrefix}-panel-${value}` `aria-controls`; panels use that tab ID in `aria-labelledby` |
 
 Every multi-option selector rendered as a row of equal buttons **must** use
 `SegmentedControl`. Inline `<div className="settings-segment">` with manual

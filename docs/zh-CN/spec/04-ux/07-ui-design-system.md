@@ -1091,6 +1091,7 @@ Linux 保留淡入淡出和滑动退出。
 | 子项角色 | `radio` / 无 / `tab`，由容器角色决定 |
 | 泛型 | `<T extends string>`，确保值与 `onChange` 的类型安全 |
 | 选项 | `readonly { value: T; label: ReactNode }[]`，标签可使用 JSX（如数量徽章） |
+| 标签页关联 | `idPrefix` 为标签页生成稳定的 `${idPrefix}-tab-${value}` ID 和对应的 `${idPrefix}-panel-${value}` `aria-controls`；面板通过 `aria-labelledby` 引用标签页 ID |
 
 呈现为一排等宽按钮的多选一控件必须使用 `SegmentedControl`；不得手写
 `<div className="settings-segment">` 和按钮循环。
