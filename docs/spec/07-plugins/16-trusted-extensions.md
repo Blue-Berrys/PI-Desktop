@@ -208,30 +208,6 @@ dependency specs, disables git resolution, and isolates npm's config/cache from
 the user's credentials and proxy settings. Importing a package does not promise
 that every third-party extension dependency can execute.
 
-### Installed npm skill candidates (issue #236)
-
-Settings → Skills lists read-only candidates from
-`~/.pi/agent/npm/node_modules`, including scoped packages. Candidates display
-package name, source path, declared skill paths, and a warning when executable
-extensions are included. Discovery grants no permissions and does not execute
-package code. Refresh retries discovery; invalid packages show diagnostics
-without suppressing healthy candidates, including when a scoped directory is
-unreadable. Hoisted npm dependencies do not cap discovery; metadata reads are
-asynchronous and must read a regular file no larger than 256 KiB. Symbolic package
-links are not followed. The existing contribution parser enforces path bounds.
-
-Import and enable asks for native confirmation (Cancel is the default), then
-uses the same importer, dependency policy, registration, and runtime as manual
-import. The renderer sends only a candidate id. Main rediscovers before and
-after confirmation, rejecting stale metadata, changed declarations, arbitrary
-paths and concurrent imports. Registered imported packages are marked Already
-imported, including when disabled; manage them in Plugins. Unregistered leftover
-directories do not block retry. If host registration succeeds but runtime loading
-fails, the error remains visible and the panel refreshes the registered state;
-recovery uses Plugins reload or app restart. No second persisted enablement registry exists.
-No schema or host RPC version changes. General CLI configuration discovery and
-source-update synchronization remain outside scope. See ADR pi-npm-skill-discovery.
-
 ## 4. Loading and runtime
 
 ### 4.1 Where extensions run
@@ -299,6 +275,11 @@ unsupported ones.
 | Deferred to v2 | `sendMessage`, `appendEntry`, `setLabel`, `sessionManager` read API, `switchSession`, `registerShortcut`, `registerMarkdownTransformer`, `ui.setEditorText`, `ui.getEditorText`, `ui.addAutocompleteProvider`, `registerFlag` value editing |
 | Unsupported | `ui.setWidget`, `ui.setFooter`, `ui.setHeader`, `ui.setTitle`, `ui.custom`, `ui.overlay`, `ui.onTerminalInput`, `ui.setWorkingVisible`, `ui.setWorkingIndicator`, `ui.setHiddenThinkingLabel`, `ui.pasteToEditor`, `ui.editor`, `registerMessageRenderer`, `registerEntryRenderer`, `navigateTree`, `shutdown` |
 
+`getActiveTools` describes the model-facing declarations, not execution grants.
+Plan/Goal can retain denied Write/Edit and configured Task-family declarations;
+the runtime mode gate runs before extension tool-call hooks or handlers. Plugins
+must not infer permission from the presence of a name in this list.
+
 `registerAgent({ id, name?, models, stream? | complete? })` registers a
 session-scoped plugin-owned LLM integration. Each model declares bounded public
 metadata (`id`, display name, API label, modalities, reasoning and limits). The
@@ -333,7 +314,7 @@ are honored where the event type defines a result.
 | `session_info_changed` | Session rename through `setSessionName` | No |
 | `project_trust` | v1 note: not emitted; enablement per project is the trust decision | No |
 | `resources_discover` | v1 note: not emitted; skills and prompt discovery stay in Electron main | n/a |
-| `before_agent_start` | Before the first provider request of a turn | Yes, system prompt replacement only |
+| `before_agent_start` | Before the first provider request of a turn | Yes, returned system prompt replacements chain in handler order |
 | `context` | `prepareNextTurn` | Yes, replacement message list |
 | `before_provider_request`, `before_provider_headers`, `after_provider_response` | Provider call wrapper | Request return value; headers mutate the payload in place |
 | `agent_start`, `agent_end`, `agent_settled` | Agent loop boundaries | No |
@@ -347,6 +328,22 @@ are honored where the event type defines a result.
 | `session_before_fork` | v1 note: not emitted; fork runs in Electron main | n/a |
 | `input` | v1 note: not emitted; Host queue admission is not wired yet | n/a |
 | `user_bash`, `session_before_switch`, `session_before_tree`, `session_tree`, `ui_prompt_start`, `ui_prompt_end` | Not emitted in v1 | n/a |
+
+For `before_agent_start`, each handler receives its own payload copy containing
+the last successfully returned string `systemPrompt`. The desktop supplies
+extensions sorted by extension ID; handlers within an extension run in
+registration order. Returning `event.systemPrompt + suffix` preserves earlier
+additions. Returning a different string, including an empty string, deliberately
+replaces the current prompt. Missing or non-string prompt fields, exceptions,
+timeouts, and unreturned input mutations retain the last accepted prompt.
+Cancelled dispatches return no result; late completions cannot change it.
+
+Each turn starts this chain from its freshly composed base prompt, so additions
+do not accumulate across turns. The same ordered handlers, base, and returned
+strings produce identical prompt bytes; this does not guarantee provider cache
+hits or stabilize content produced by plugins themselves. No append field or
+new plugin API is introduced, and other events retain their existing folding
+rules. See [ADR 0214](../../adr/0214-trusted-extensions.md).
 
 Desktop event capabilities are maintained in
 `packages/agent-runtime/src/extensions/event-capabilities.ts`: result,

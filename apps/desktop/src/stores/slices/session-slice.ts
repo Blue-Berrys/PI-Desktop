@@ -25,7 +25,6 @@ import {
   retainSessionPane,
 } from "../../lib/session-panes";
 import {
-  normalizeProjectPath,
   projectPathsForNewSessions,
   sessionMatchesProject,
 } from "../../lib/sidebar-session-groups";
@@ -47,12 +46,9 @@ import { sessionReadLooksEmpty } from "../../lib/session-transcript-read";
 import type {
   AppState,
   DraftSessionConfiguration,
-  NavigationOptions,
-  PendingPlanRefreshResult,
   SessionHistoryWindow,
 } from "../app-state";
 import {
-  type SessionConfiguration,
   type SessionRuntime,
 } from "../runtime/session-runtime";
 import type { StoreAccess } from "./types";
@@ -242,6 +238,7 @@ export function createSessionSlice({
         );
       }
       set({ selectingSessionId: id, page: "chat" });
+      const outcomeAcknowledgement = get().acknowledgeSessionOutcome(id);
 
       const commitSelection = (
         messages: UiMessage[],
@@ -421,7 +418,6 @@ export function createSessionSlice({
         }
         rememberSessionCompactions(id, detail.session);
         void get().restorePendingPlan(id);
-        void get().acknowledgeSessionOutcome(id);
         const selected = get().sessions.find((session) => session.id === id);
         if (
           selected &&
@@ -459,6 +455,7 @@ export function createSessionSlice({
           }
         }
       } finally {
+        await outcomeAcknowledgement;
         if (runtime.isCurrentSessionSelection(selection)) {
           runtime.clearSessionSelection(selection);
           set((state) =>

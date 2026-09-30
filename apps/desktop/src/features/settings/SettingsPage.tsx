@@ -7,7 +7,6 @@ import type {
   ShortcutPlatform,
 } from "@pi-desktop/shared";
 import { useAppStore } from "../../stores/app-store";
-import { useMidAutumnEggStore } from "../../stores/mid-autumn-egg-store";
 import { api } from "../../lib/api";
 import {
   isSettingsDestinationHidden,
@@ -89,14 +88,20 @@ export function SettingsPage() {
   const settings = useAppStore((s) => s.settings);
   const version = useAppStore((s) => s.version);
   const refreshProviders = useAppStore((s) => s.refreshProviders);
-  const showMidAutumnEgg = useMidAutumnEggStore((s) => s.show);
   const platform = (window.piDesktop?.platform ?? "darwin") as ShortcutPlatform;
 
-  // Developer-only destinations (Cloud sync and Remote Hosts) exist only
-  // while developer mode is on; the rail, page, and search drop them together.
+  // Experimental feature surfaces remain available in development builds only.
+  const includeDevelopmentOnly = import.meta.env.DEV;
   const developerMode = settings?.developerMode === true;
-  const navEntries = useMemo(() => visibleSettingsNav(developerMode), [developerMode]);
-  const tabHidden = isSettingsDestinationHidden(tab, developerMode);
+  const navEntries = useMemo(
+    () => visibleSettingsNav(developerMode, includeDevelopmentOnly),
+    [developerMode, includeDevelopmentOnly],
+  );
+  const tabHidden = isSettingsDestinationHidden(
+    tab,
+    developerMode,
+    includeDevelopmentOnly,
+  );
 
   const [query, setQuery] = useState("");
   const [recoveringSettings, setRecoveringSettings] = useState(!settings);
@@ -115,7 +120,12 @@ export function SettingsPage() {
     if (activeExtension) setActiveExtension(null);
   }
   const contentRef = useRef<HTMLDivElement>(null);
+  const settingsSearchRef = useRef<HTMLInputElement>(null);
   const destination = activeExtension ? `extension:${activeExtension.ref}` : `builtin:${tab}`;
+
+  useLayoutEffect(() => {
+    settingsSearchRef.current?.focus({ preventScroll: true });
+  }, []);
 
   useLayoutEffect(() => {
     // Reset before paint and before the search-anchor effect positions its row.
@@ -285,6 +295,7 @@ export function SettingsPage() {
           <div className="settings-search-wrap no-drag">
             <IconSearch size={14} />
             <input
+              ref={settingsSearchRef}
               className="settings-search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -530,7 +541,7 @@ export function SettingsPage() {
             </div>
           )}
 
-          {tab === "voice" && settings && (
+          {tab === "voice" && !tabHidden && settings && (
             <VoiceSettingsSection
               t={t}
               settings={settings}
@@ -595,18 +606,11 @@ export function SettingsPage() {
                     {t("settings.openFeedback")}
                   </Button>
                 </SettingsRow>
-                <UpdatesRow currentVersion={version?.version} />
-              </SettingsCard>
-
-              <SettingsCard title={t("settings.easterEggs")}>
-                <SettingsRow
-                  title={t("settings.midAutumnEgg")}
-                  description={t("settings.midAutumnEggDesc")}
-                >
-                  <Button variant="secondary" onClick={showMidAutumnEgg}>
-                    {t("settings.playMidAutumnEgg")}
-                  </Button>
-                </SettingsRow>
+                <UpdatesRow
+                  currentVersion={version?.version}
+                  settings={settings ?? null}
+                  saveSettings={saveSettings}
+                />
               </SettingsCard>
 
               {settings && (

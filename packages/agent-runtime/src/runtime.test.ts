@@ -1150,6 +1150,33 @@ describe("DesktopAgentRuntime configuration matching", () => {
     await runtime.dispose();
   });
 
+  it("formats scratch directory with forward slashes for POSIX shells", async () => {
+    const gitBash: CommandShellOption = {
+      id: "git-bash",
+      label: "Git Bash",
+      dialect: "posix",
+      available: true,
+      isDefault: false,
+    };
+    const windowsScratch = "C:\\Users\\User\\.pi-desktop\\scratch\\sess-123";
+    const runtime = createRuntime({
+      commandShell: gitBash,
+      scratchDir: windowsScratch,
+    });
+    const systemPrompt = (runtime as any).agent.state.systemPrompt as string;
+    const bash = (runtime as any).agent.state.tools.find(
+      (tool: any) => tool.name === "Bash",
+    );
+
+    const posixScratch = "C:/Users/User/.pi-desktop/scratch/sess-123";
+    expect(systemPrompt).toContain(`\`${posixScratch}\``);
+    expect(systemPrompt).toContain("in Bash: $PI_SCRATCH_DIR");
+    expect(systemPrompt).not.toContain(windowsScratch);
+    expect(bash.description).toContain(posixScratch);
+
+    await runtime.dispose();
+  });
+
   it("sends the default Bash timeout and preserves explicit overrides", async () => {
     const host = {
       call: vi.fn().mockResolvedValue({ ok: true, content: "done" }),
@@ -1269,8 +1296,8 @@ describe("DesktopAgentRuntime configuration matching", () => {
       ),
     };
     const runtime = createRuntime({ host });
-    // Read the catalog, not the active set: Glob and Grep are deferred tools
-    // and are only activated on demand.
+    // Read the full registry so aliases can be exercised independently of the
+    // active set selected for a particular session mode.
     const tool = (name: string) => (runtime as any).toolCatalog.get(name);
 
     for (const name of ["Read", "Write", "Edit"]) {
@@ -1883,7 +1910,7 @@ describe("DesktopAgentRuntime live activity", () => {
 });
 
 describe("DesktopAgentRuntime deferred tool catalog", () => {
-  it("keeps the first agent request on core tools plus discovery", async () => {
+  it("starts Agent with core tools plus workspace search and discovery", async () => {
     const runtime = createRuntime({
       pluginTools: [
         {
@@ -1908,6 +1935,8 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
       "Bash",
       "Edit",
       "Write",
+      "Glob",
+      "Grep",
       "asktool",
       "Skill",
       "EnterPlanMode",
@@ -1915,6 +1944,8 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
       "new_context",
       "ToolSearch",
     ]);
+    expect((runtime as any).deferredToolNames.has("Glob")).toBe(false);
+    expect((runtime as any).deferredToolNames.has("Grep")).toBe(false);
     expect(names).not.toContain("A2A");
     expect(names).not.toContain("Peer");
     expect(names).not.toContain("BrowserPreview");
@@ -1938,9 +1969,29 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
     const askTool = (runtime as any).agent.state.tools.find(
       (tool: any) => tool.name === "asktool",
     );
+    const optionVariants =
+      (askTool.parameters as any).properties.questions.items.properties.options.items.anyOf;
+    expect(optionVariants).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: "string" }),
+        expect.objectContaining({
+          type: "object",
+          properties: expect.objectContaining({
+            label: expect.objectContaining({ type: "string" }),
+            description: expect.objectContaining({ type: "string" }),
+          }),
+        }),
+      ]),
+    );
     const pending = askTool.execute("ask-call-1", {
       questions: [
-        { question: "Color?", options: ["Blue", "Green"] },
+        {
+          question: "**Color?**",
+          options: [
+            { label: "**Blue**", description: "A calm, cool color." },
+            "Green",
+          ],
+        },
         { question: "Targets?", options: ["Web", "Desktop"], multiSelect: true },
       ],
     });
@@ -1953,7 +2004,13 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
       sessionId: "session-1",
       toolCallId: "ask-call-1",
       questions: [
-        { question: "Color?", options: ["Blue", "Green"] },
+        {
+          question: "**Color?**",
+          options: [
+            { label: "**Blue**", description: "A calm, cool color." },
+            "Green",
+          ],
+        },
         { question: "Targets?", options: ["Web", "Desktop"], multiSelect: true },
       ],
     });
@@ -1961,12 +2018,12 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
       runtime.resolveAskTool({
         requestId: request.requestId,
         sessionId: "session-1",
-        answers: [["Blue"], null],
+        answers: [["**Blue**"], null],
       }),
     ).toEqual({ ok: true });
     await expect(pending).resolves.toMatchObject({
-      content: [{ text: "Color?：Blue\n---\nTargets?：" }],
-      details: { answers: [["Blue"], null] },
+      content: [{ text: "**Color?**：**Blue**\n---\nTargets?：" }],
+      details: { answers: [["**Blue**"], null] },
     });
     await runtime.dispose();
   });
@@ -1993,8 +2050,7 @@ describe("DesktopAgentRuntime deferred tool catalog", () => {
         "SubmitPlan",
       ]),
     );
-    expect(names).not.toContain("Write");
-    expect(names).not.toContain("Edit");
+    expect(names).toEqual(expect.arrayContaining(["Write", "Edit"]));
     expect(names).not.toContain("Skill");
     expect(names).not.toContain("PluginCheck");
     expect(names).not.toContain("plugin_demo_run");
@@ -2143,6 +2199,8 @@ describe("DesktopAgentRuntime mode and tool composition", () => {
     expect(agentTools).toEqual(
       expect.arrayContaining([
         "Read",
+        "Glob",
+        "Grep",
         "Write",
         "Edit",
         "Bash",
@@ -2167,13 +2225,12 @@ describe("DesktopAgentRuntime mode and tool composition", () => {
         "SubmitPlan",
       ]),
     );
-    expect(planTools).not.toEqual(
-      expect.arrayContaining(["Write", "Edit", "plugin_demo_run"]),
-    );
+    expect(planTools).toEqual(expect.arrayContaining(["Write", "Edit"]));
+    expect(planTools).not.toContain("plugin_demo_run");
     expect(planTools).not.toContain("EnterPlanMode");
     expect(planTools).not.toContain("SubmitGoal");
     expect(agent.state.systemPrompt).toContain("SubmitPlan");
-    expect(agent.state.systemPrompt).toContain("Do not use Write, Edit, or any unknown tool");
+    expect(agent.state.systemPrompt).toContain("Do not use Write, Edit, Task");
     expect(agent.state.systemPrompt).toContain("plan-safe actions");
     expect(agent.state.systemPrompt).not.toContain("plugin_demo_run");
     expect(agent.state.systemPrompt).not.toContain("PluginCheck");
@@ -2184,7 +2241,7 @@ describe("DesktopAgentRuntime mode and tool composition", () => {
     await runtime.dispose();
   });
 
-  it("gives Goal mode the read-only core plus only SubmitGoal", async () => {
+  it("gives Goal mode the read-only core, guarded editing declarations, and SubmitGoal", async () => {
     const runtime = createRuntime({
       mode: "goal",
       pluginTools: [
@@ -2208,8 +2265,7 @@ describe("DesktopAgentRuntime mode and tool composition", () => {
         "SubmitGoal",
       ]),
     );
-    expect(goalTools).not.toContain("Write");
-    expect(goalTools).not.toContain("Edit");
+    expect(goalTools).toEqual(expect.arrayContaining(["Write", "Edit"]));
     expect(goalTools).not.toContain("plugin_demo_run");
     expect(goalTools).not.toContain("SubmitPlan");
     expect(goalTools).not.toContain("EnterGoalMode");
@@ -3559,6 +3615,39 @@ describe("DesktopAgentRuntime session collaboration provenance", () => {
     await runtime.dispose();
     await restored.dispose();
   });
+  it("replays every under-budget historical image as a provider image block", async () => {
+    const history: UiMessage[] = Array.from({ length: 6 }, (_, index) => {
+      const payload = Buffer.from(`historical-image-${index + 1}`).toString("base64");
+      return {
+        id: `image-${index + 1}`,
+        role: "user",
+        content: `image ${index + 1}`,
+        createdAt: new Date(Date.now() + index).toISOString(),
+        attachments: [
+          {
+            name: `image-${index + 1}.png`,
+            ref: `attachments/image-${index + 1}`,
+            kind: "image",
+            mimeType: "image/png",
+            data: payload,
+          },
+        ],
+      };
+    });
+    const runtime = createRuntime({ history });
+    try {
+      const messages = buildSessionContext((runtime as any).fullEntries).messages;
+      const imageBlocks = messages.flatMap((message) =>
+        message.role === "user" && Array.isArray(message.content)
+          ? message.content.filter((block) => block.type === "image")
+          : [],
+      );
+      expect(imageBlocks).toHaveLength(6);
+    } finally {
+      await runtime.dispose();
+    }
+  });
+
 });
 
 describe("DesktopAgentRuntime tool history restore (D120)", () => {
@@ -5246,7 +5335,7 @@ describe("DesktopAgentRuntime per-turn context protection", () => {
     const events = onEvent.mock.calls.map(([envelope]) => (envelope as any).event);
     const endEvent = events.find((e) => e.type === "message_end");
     expect(endEvent).toBeDefined();
-    expect(endEvent.message.usage).toEqual({
+    expect(endEvent.message.usage).toMatchObject({
       inputTokens: 200,
       outputTokens: 80,
       totalTokens: 280,
@@ -6830,7 +6919,7 @@ describe("DesktopAgentRuntime subagents", () => {
     await runtime.dispose();
   });
 
-  it("withholds Task without definitions and in contract modes", async () => {
+  it("withholds undefined delegates but rejects declared Task execution in contract modes", async () => {
     const withoutDefinitions = createRuntime();
     expect(taskTool(withoutDefinitions)).toBeUndefined();
     await withoutDefinitions.dispose();
@@ -6839,8 +6928,9 @@ describe("DesktopAgentRuntime subagents", () => {
     // with Bash or Edit would drive straight through them.
     for (const mode of ["plan", "goal"] as const) {
       const runtime = createRuntime({ mode, subagents: [explorer] });
-      expect(taskTool(runtime)).toBeUndefined();
-      expect((runtime as any).toolCatalog.has("Task")).toBe(false);
+      expect(taskTool(runtime)).toBeDefined();
+      await expect(taskTool(runtime).execute("blocked-task", { agent: "explorer", task: "Inspect." }))
+        .rejects.toThrow(`not allowed in ${mode}`);
       await runtime.dispose();
     }
   });
@@ -6848,8 +6938,11 @@ describe("DesktopAgentRuntime subagents", () => {
   it("rebuilds the Task catalog on a mode switch", async () => {
     const runtime = createRuntime({ subagents: [explorer] });
 
+    const staleTask = taskTool(runtime);
     runtime.setMode("plan");
-    expect((runtime as any).toolCatalog.has("Task")).toBe(false);
+    expect(taskTool(runtime)).toBeDefined();
+    await expect(staleTask.execute("stale-task", { agent: "explorer", task: "Inspect." }))
+      .rejects.toThrow("not allowed in plan");
     runtime.setMode("agent");
     expect(taskTool(runtime)).toBeDefined();
 
@@ -7169,6 +7262,7 @@ describe("DesktopAgentRuntime subagents", () => {
       report: "The explorer subagent failed after 1 turn(s): no route.",
       turns: 1,
       toolCalls: 0,
+      scratchReportPath: "/tmp/session-scratch/delegations/task-1/report.md",
       error: { code: "NETWORK_ERROR", message: "no route" },
     };
     const task = taskTool(runtime);
@@ -7206,6 +7300,7 @@ describe("DesktopAgentRuntime subagents", () => {
           status: "failed",
           startedAt: expect.any(Number),
           completedAt: expect.any(Number),
+          scratchReportPath: "/tmp/session-scratch/delegations/task-1/report.md",
         },
       ],
     });
@@ -8649,9 +8744,9 @@ describe("DesktopAgentRuntime deferred tool restore (#225)", () => {
         assistantRow,
         searchRow({
           toolResult: {
-            content: [{ type: "text", text: "Activated on-demand tools: BrowserPreview, Glob." }],
+            content: [{ type: "text", text: "Activated on-demand tools: BrowserPreview, PluginCheck." }],
             details: {
-              addedToolNames: ["BrowserPreview", "Glob"],
+              addedToolNames: ["BrowserPreview", "PluginCheck"],
             },
           },
         }),
@@ -8672,7 +8767,7 @@ describe("DesktopAgentRuntime deferred tool restore (#225)", () => {
 
     (runtime as any).resetDeferredToolsForPrompt();
     expect(hasTool(runtime, "BrowserPreview")).toBe(true);
-    expect(hasTool(runtime, "Glob")).toBe(true);
+    expect(hasTool(runtime, "PluginCheck")).toBe(true);
     await runtime.dispose();
   });
 
@@ -10069,4 +10164,169 @@ describe("DesktopAgentRuntime delegation wait settlement safety", () => {
       await runtime.dispose();
     }
   }, 1_000);
+});
+
+/**
+ * The Google adapters reject any `fetch` that is not `globalThis.fetch`, so a
+ * turn bound for them must reach the adapter without one while still carrying
+ * the provider's own headers (issue #1072).
+ */
+describe("DesktopAgentRuntime Google Generative AI transport (#1072)", () => {
+  it("streams a turn through the native endpoint with the provider's headers", async () => {
+    const googleProvider: RuntimeProviderConfig = {
+      ...provider,
+      id: "google",
+      name: "Google Gemini",
+      vendorKey: "google",
+      apiStyle: "google_generative_ai",
+      baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+      modelId: "gemini-3.8-flash",
+      apiKey: "AIza-test",
+      authKind: "api_key",
+      headers: { "X-Team": "platform" },
+      modelConfig: {
+        source: "generic",
+        name: "Gemini 3.8 Flash",
+        baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+        reasoning: true,
+        input: ["text"],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        contextWindow: 1_000_000,
+        maxTokens: 65_536,
+      },
+    };
+    const runtime = createRuntime({ provider: googleProvider, thinkingLevel: "off" });
+    const agent = (runtime as any).agent;
+    const requests: Array<{ url: string; headers: Record<string, string> }> = [];
+    vi.stubGlobal("fetch", async (input: RequestInfo | URL, init?: RequestInit) => {
+      const headers: Record<string, string> = {};
+      new Headers(init?.headers).forEach((value, key) => {
+        headers[key.toLowerCase()] = value;
+      });
+      requests.push({
+        url: input instanceof Request ? input.url : String(input),
+        headers,
+      });
+      const chunk = (body: unknown) => `data: ${JSON.stringify(body)}\n\n`;
+      return new Response(
+        chunk({
+          candidates: [{ content: { role: "model", parts: [{ text: "hello" }] }, index: 0 }],
+        }) +
+          chunk({
+            candidates: [
+              { content: { role: "model", parts: [] }, finishReason: "STOP", index: 0 },
+            ],
+            usageMetadata: { promptTokenCount: 3, candidatesTokenCount: 1, totalTokenCount: 4 },
+          }),
+        { status: 200, headers: { "content-type": "text/event-stream" } },
+      );
+    });
+
+    try {
+      const stream = agent.streamFunction(
+        agent.state.model,
+        {
+          systemPrompt: "system",
+          messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
+          tools: [],
+        },
+        {},
+      );
+      const result = await stream.result();
+
+      expect(result.stopReason).toBe("stop");
+      expect(result.content).toEqual([{ type: "text", text: "hello" }]);
+      expect(requests).toHaveLength(1);
+      expect(requests[0].url).toBe(
+        "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:streamGenerateContent?alt=sse",
+      );
+      expect(requests[0].headers["x-team"]).toBe("platform");
+    } finally {
+      vi.unstubAllGlobals();
+      await runtime.dispose();
+    }
+  }, 20_000);
+});
+
+describe("DesktopAgentRuntime summary conversation key", () => {
+  /** Minimal 200 SSE answer for a Responses summary request. */
+  function summarySse(): Response {
+    const item = {
+      id: "msg_fixture_summary",
+      type: "message",
+      role: "assistant",
+      status: "completed",
+      content: [{ type: "output_text", text: "A short synthetic summary.", annotations: [] }],
+    };
+    const events = [
+      { type: "response.created", response: { id: "resp_fixture_summary" } },
+      { type: "response.output_item.added", output_index: 0, item: { ...item, content: [] } },
+      { type: "response.output_text.delta", output_index: 0, content_index: 0, delta: "A short synthetic summary." },
+      { type: "response.output_item.done", output_index: 0, item },
+      {
+        type: "response.completed",
+        response: {
+          id: "resp_fixture_summary",
+          status: "completed",
+          output: [item],
+          usage: { input_tokens: 100, output_tokens: 8 },
+        },
+      },
+    ];
+    return new Response(
+      events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+  }
+
+  it("sends the session id so a conversation-keyed gateway accepts the summary request", async () => {
+    const requests: Record<string, unknown>[] = [];
+    const fetchMock = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      requests.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return summarySse();
+    });
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    vi.stubGlobal("fetch", fetchMock);
+    const runtime = createRuntime({
+      provider: {
+        ...provider,
+        apiStyle: "responses",
+        baseUrl: "https://summary-fixture.invalid/v1",
+        apiKey: "sk-fixture-not-for-logs",
+      },
+      history: [
+        {
+          id: "old-user",
+          role: "user",
+          content: "private-fixture-history ".repeat(6_000),
+          createdAt: "2026-09-25T00:00:00Z",
+        },
+        {
+          id: "old-assistant",
+          role: "assistant",
+          content: "Earlier work is complete.",
+          status: "complete",
+          createdAt: "2026-09-25T00:00:01Z",
+        },
+        {
+          id: "latest-user",
+          role: "user",
+          content: "Keep working after the checkpoint.",
+          createdAt: "2026-09-25T00:00:02Z",
+        },
+      ],
+    });
+    try {
+      await runtime.compactManually();
+
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.prompt_cache_key).toBe("session-1");
+      const logged = stderr.mock.calls.map(([chunk]) => String(chunk)).join("");
+      expect(logged).not.toContain("compaction summary failed");
+    } finally {
+      await runtime.dispose();
+      stderr.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
 });

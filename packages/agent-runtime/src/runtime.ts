@@ -1,7 +1,10 @@
+import { accountModelStream } from "./request-usage.js";
+import { modeToolDenial, retainModeToolDeclaration, withModeExecutionGuard } from "./mode-tool-access.js";
 import { restoreHostedSearchReplay } from "./hosted-search-replay.js";
 import { requestExtensionUi } from "./extensions/ui-request.js";
 import { readLocalRequestErrorDetails } from "./local-request-errors.js";
 import { imageGenerationDescription, imageGenerationParameters } from "./image-generation/tool.js";
+import { todoWriteDescription, todoWriteParameters } from "./todo-tool.js";
 import { scheduledToolParameters, scheduledToolDescriptions } from "./scheduled-tools.js";
 import { withPiFileOpToolNames } from "./pi-file-ops.js";
 import { randomUUID } from "node:crypto";
@@ -99,12 +102,14 @@ import {
   contextCompactionMark,
   cumulativeDelta,
   DEFAULT_SUBAGENT_PERMISSION,
+  askToolOptionLabel,
   formatAskToolOutput,
   formatSessionMessage,
   hostedSearchFromMessage,
   isCommandShellOption,
   isToolsOutputParams,
   MAX_SUBAGENT_CONCURRENCY,
+  normalizeAskToolOption,
   normalizeSubagentName,
   proposalKindForMode,
   resolveSubagentToolNames,
@@ -147,6 +152,7 @@ import {
   createExtensionAgentModels,
   createProviderModels,
   DEFAULT_CONTEXT_WINDOW,
+  providerRequestFetch,
   providerRequestKey,
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
@@ -519,6 +525,9 @@ function delegationSummary(record: DelegationRecord): Record<string, unknown> {
     ...(record.result?.contextDegraded
       ? { contextDegraded: record.result.contextDegraded }
       : {}),
+    ...(record.result?.scratchReportPath
+      ? { scratchReportPath: record.result.scratchReportPath }
+      : {}),
     ...(record.resumedFrom ? { resumedFrom: record.resumedFrom } : {}),
     ...(record.modelChangedFrom
       ? { modelChangedFrom: record.modelChangedFrom }
@@ -671,6 +680,8 @@ const PATH_MUTATING_TOOLS = new Set(["Write", "Edit"]);
 const CHAT_CORE_TOOL_NAMES = new Set(["Read", "Glob", "Grep", ASK_TOOL_NAME]);
 const AGENT_CORE_TOOL_NAMES = new Set([
   "Read",
+  "Glob",
+  "Grep",
   "Write",
   "Edit",
   "Bash",
@@ -1210,13 +1221,26 @@ function shellSyntaxGuidance(shell: CommandShellOption): string {
   }
 }
 
+export function formatScratchDirForShell(
+  shell: CommandShellOption,
+  scratchDir?: string,
+): string | undefined {
+  if (!scratchDir) return undefined;
+  if (shell.dialect === "posix") {
+    // POSIX shells (including Git Bash on Windows) require forward slashes.
+    return scratchDir.replaceAll("\\", "/");
+  }
+  return scratchDir;
+}
+
 export function commandShellGuidance(
   shell: CommandShellOption,
   scratchDir?: string,
 ): string {
   const scratchVariable = shellScratchVariable(shell);
-  const scratch = scratchDir
-    ? `The session scratch directory is \`${scratchDir}\`; use ${scratchVariable} for it and keep temporary files there.`
+  const formattedScratch = formatScratchDirForShell(shell, scratchDir);
+  const scratch = formattedScratch
+    ? `The session scratch directory is \`${formattedScratch}\`; use ${scratchVariable} for it and keep temporary files there.`
     : `When PI_SCRATCH_DIR is available, use ${scratchVariable} for the session scratch directory and keep temporary files there.`;
   return [
     `Shell commands run through ${shell.label} (${shell.id}). The protocol tool remains named Bash for compatibility, even when the active shell is PowerShell or cmd.`,
@@ -1229,13 +1253,14 @@ function commandShellToolDescription(
   shell: CommandShellOption,
   scratchDir?: string,
 ): string {
+  const formattedScratch = formatScratchDirForShell(shell, scratchDir);
   return [
     `Run a non-interactive command through ${shell.label} in the workspace root.`,
     "The protocol tool remains named Bash for compatibility; write commands for the active shell dialect.",
     shellSyntaxGuidance(shell),
     `The session scratch directory variable is ${shellScratchVariable(shell)}.`,
     `An optional timeout from 1 to ${MAX_COMMAND_TIMEOUT_SECONDS} seconds may be supplied; without it, the command defaults to a 60-second timeout.`,
-    ...(scratchDir ? [`The session scratch directory is ${scratchDir}.`] : []),
+    ...(formattedScratch ? [`The session scratch directory is ${formattedScratch}.`] : []),
   ].join(" ");
 }
 
@@ -1563,7 +1588,6 @@ export class DesktopAgentRuntime {
   private models: Models;
   private model: Model<Api>;
   private turnId?: string;
-  private hostTurnId?: string;
   private disposed = false;
   readonly sessionId: string;
   private mode: Mode;
@@ -1772,7 +1796,6 @@ export class DesktopAgentRuntime {
 
   constructor(opts: AgentRuntimeOptions) {
     this.sessionId = opts.sessionId;
-    this.hostTurnId = opts.turnId;
     this.turnId = opts.turnId;
     this.mode = opts.mode;
     this.planningState = proposalKindForMode(this.mode) ? "planning" : "inactive";
@@ -1850,7 +1873,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
       // Session scratch directory (D114).
       ...(this.scratchDir
         ? [
-            `Your scratch directory for this session is \`${this.scratchDir}\` (in Bash: $PI_SCRATCH_DIR). Store ad-hoc temporary and intermediate files there using absolute paths. Workspace writes must be task-related project files or required toolchain outputs. Scratch persists across turns and is deleted with the session.`,
+            `Your scratch directory for this session is \`${formatScratchDirForShell(this.commandShell, this.scratchDir)}\` (in Bash: ${shellScratchVariable(this.commandShell)}). Store ad-hoc temporary and intermediate files there using absolute paths. Workspace writes must be task-related project files or required toolchain outputs. Scratch persists across turns and is deleted with the session.`,
           ]
         : []),
       // Plugin skills (D174).
@@ -1897,21 +1920,24 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
               // failed response separately so a 429 can honor Retry-After headers,
               // and capture the transport cause of a rejection while the original
               // Error still exists (issue #234).
-              fetch: captureProviderResponse(
-                options?.fetch,
-                (response, requestBytes, failure) => {
-                  this.providerResponseStatus = response?.status;
-                  this.providerRequestBytes = requestBytes;
-                  this.providerFetchFailure = failure;
-                  if (failure) this.recoverProviderTransport(failure);
-                  // A gateway 502/503 can also state Retry-After, so keep headers
-                  // for every status whose delay is usable, not only for 429.
-                  this.providerRetryHeaders = carriesRetryDelayHeaders(
-                    response?.status,
-                  )
-                    ? response?.headers
-                    : undefined;
-                },
+              fetch: providerRequestFetch(
+                m.api,
+                captureProviderResponse(
+                  options?.fetch,
+                  (response, requestBytes, failure) => {
+                    this.providerResponseStatus = response?.status;
+                    this.providerRequestBytes = requestBytes;
+                    this.providerFetchFailure = failure;
+                    if (failure) this.recoverProviderTransport(failure);
+                    // A gateway 502/503 can also state Retry-After, so keep headers
+                    // for every status whose delay is usable, not only for 429.
+                    this.providerRetryHeaders = carriesRetryDelayHeaders(
+                      response?.status,
+                    )
+                      ? response?.headers
+                      : undefined;
+                  },
+                ),
               ),
               onResponse: async (response, responseModel) => {
                 this.providerResponseStatus = response.status;
@@ -1927,6 +1953,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
             copilotRequestHeaders(this.provider, context),
             this.provider.headers,
           ),
+          m.api,
         );
         const hookedOptions = this.withExtensionProviderHooks(requestOptions, m);
         // The watchdog must be able to *stop* what it abandons. It wraps the
@@ -1950,20 +1977,25 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
             stallAbort.signal,
           ]),
         };
+        const usageTurnId = this.turnId;
         const retryStream = createProviderRetryStream(
           m,
           context,
           attemptOptions,
-          (retryOptions) =>
+          (retryOptions) => accountModelStream(m, () =>
             this.thinkingLevel === "omit"
               ? this.models.stream(omitThinkingModel(m), context, retryOptions)
-              : this.models.streamSimple(m, context, retryOptions),
+              : this.models.streamSimple(m, context, retryOptions), {
+                providerId: this.provider.id,
+                nativeCost: this.provider.modelConfig?.nativeCost,
+                onUsage: (usage) => this.emit({ type: "usage", usage }, usageTurnId),
+              }),
           {
             claim: (error, phase) => this.claimProviderRetry(error, phase),
             headers: () => this.providerRetryHeaders,
             status: () => this.providerResponseStatus,
             failure: () => this.providerFetchFailure,
-            onRetry: ({ error, phase, attempt, delayMs }) => {
+            onRetry: ({ error, attempt, delayMs }) => {
               this.setAgentActivity({
                 phase: "retrying",
                 since: Date.now(),
@@ -2303,7 +2335,12 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
         reason: `${[...MODE_TRANSITION_TOOL_NAMES].join(", ")} must be the only tool call in the assistant message.`,
       };
     }
-    if (!transition) return this.extensionToolCall(context);
+    if (!transition) {
+      if (!this.isToolAllowedInMode(context.toolCall.name)) {
+        return { block: true, reason: modeToolDenial(context.toolCall.name, this.mode) };
+      }
+      return this.extensionToolCall(context);
+    }
     const enterKind = enterToolKind(context.toolCall.name);
     if (enterKind && this.mode !== "agent") {
       return {
@@ -2897,8 +2934,10 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
           return `Replace, insert, or delete lines in an existing file. Names positions and supplies new content only — never old_string. Required: path, tag (4 hex from the latest Read/Grep/Write/Edit), ops. Ops: PUT N.=M: replace inclusive lines N–M; PUT <N: insert before N; PUT >N: insert after N; PUT >$: append; CUT N.=M delete; REM delete the file; MV DEST rename after other ops. Body rows are + plus the final line text. Every PUT with body rows must include the trailing colon, for example PUT 48.=48:; PUT 48.=48 followed by + rows is invalid. A colonless PUT is only for a register paste such as PUT <1 @name. No -old or context rows. Ranges name only the lines being changed. Re-ground on the tag returned by every successful write. After one failed Edit, classify the error: Read the live file for a stale tag or unseen lines (or retry unchanged on a complete EDIT_LINES_UNSEEN reveal), but correct syntax or range errors directly; do not guess. Do not edit the same path concurrently.${scratchPathHint}${externalPathHint}`;
         case "Bash":
           return `${commandShellToolDescription(this.commandShell, this.scratchDir)} Use Edit or Write instead of apply_patch, git apply, or patch; do not retry a failed shell patch command repeatedly.`;
+        case "TodoWrite":
+          return todoWriteDescription;
         case ASK_TOOL_NAME:
-          return "Ask the user one or more questions. Each question has selectable options and the desktop card always provides a custom user-input option; unanswered questions are returned as empty answers.";
+          return "Ask the user one or more questions. Use Markdown in question text and option labels when formatting helps (for example, emphasis, inline code, or lists); the desktop card renders it safely. Plain strings and existing `{ label, description? }` options are accepted; descriptions remain plain text and answers return the selected source label. The card always provides a custom user-input option.";
         case "PluginScaffold":
           return "Create a PI-Desktop plugin from a template and load it for development. `directory` is workspace-relative and must be empty or new; `template` is one of panel-basic, agent-tool-basic, skill-pack, full-demo. Use this instead of hand-writing plugin files.";
         case "PluginCheck":
@@ -2913,6 +2952,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
     // stopped being readable.
     const parameters: Record<string, Parameters<typeof Type.Object>[0]> = {
       GenerateImages: imageGenerationParameters,
+      TodoWrite: todoWriteParameters,
       Read: {
         path: pathParam(
           "Existing regular file only, never a directory; workspace-relative or explicitly approved.",
@@ -3319,7 +3359,15 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
         questions: Type.Array(
           Type.Object({
             question: Type.String(),
-            options: Type.Array(Type.String()),
+            options: Type.Array(
+              Type.Union([
+                Type.String(),
+                Type.Object({
+                  label: Type.String(),
+                  description: Type.Optional(Type.String()),
+                }),
+              ]),
+            ),
             multiSelect: Type.Optional(Type.Boolean()),
           }),
         ),
@@ -3356,8 +3404,8 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
 
     // BrowserPreview is non-mutating (renders an existing workspace file in
     // the work panel browser), so it ships in every mode. PluginCheck only
-    // reads a directory; PluginScaffold and PluginPack write, so they follow
-    // Write/Edit/Bash into agent mode only.
+    // reads a directory; PluginScaffold and PluginPack write and remain
+    // Agent-only. Write/Edit keep guarded declarations in contract modes.
     const tools =
       this.mode === "agent"
         ? [
@@ -3369,8 +3417,9 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
             "Grep",
             "BrowserPreview",
             "PluginCheck",
+            "TodoWrite",
           ]
-        : ["Read", "Glob", "Grep", "BrowserPreview", "Bash"];
+        : ["Read", "Glob", "Grep", "BrowserPreview", "Bash", "Write", "Edit"];
     if (this.mode === "agent") {
       tools.push("PluginScaffold", "PluginPack", "GenerateImages", ...Object.keys(scheduledToolParameters));
     }
@@ -3431,12 +3480,11 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
       this.mode === "agent"
         ? [this.buildEnterModeTool("plan"), this.buildEnterModeTool("goal")]
         : [this.buildSubmitTool(this.mode)];
-    // Delegation is an Agent-mode capability: Plan and Goal are read-only
-    // contract negotiations, and a delegate with Bash or Edit would drive
-    // straight through that (ADR 0062). The whole lifecycle rides together:
-    // `Task` starts, `TaskWait`/`TaskList`/`TaskStop` converge (ADR 0089).
+    // Keep configured delegation declarations stable across mode changes.
+    // Contract modes reject execution before handlers can spawn/control a
+    // delegate; publishing a schema never grants delegation permission.
     const subagentTools =
-      this.mode === "agent" && this.subagents.length
+      this.subagents.length
         ? [
             this.buildSubagentTool(),
             this.buildSubagentWaitTool(),
@@ -3470,7 +3518,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
   private rebuildToolCatalog(): void {
     const catalog = new Map<string, AgentTool>();
     for (const tool of this.buildToolDefinitions()) {
-      if (!this.isToolAllowedInMode(tool.name)) continue;
+      if (!this.isToolAllowedInMode(tool.name) && !retainModeToolDeclaration(tool.name)) continue;
       // The execution mode is decided here, in one place, so no tool can grow
       // an accidental parallel batch: everything is sequential except `Task`.
       // pi runs a whole batch sequentially when it holds one sequential tool,
@@ -3480,11 +3528,14 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
       // same declaration (#864).
       catalog.set(
         tool.name,
-        withExplicitRequired({
-          ...tool,
-          executionMode:
-            tool.name === SUBAGENT_TOOL_NAME ? "parallel" : "sequential",
-        }),
+        withModeExecutionGuard(
+          withExplicitRequired({
+            ...tool,
+            executionMode:
+              tool.name === SUBAGENT_TOOL_NAME ? "parallel" : "sequential",
+          }),
+          () => this.isToolAllowedInMode(tool.name) ? undefined : modeToolDenial(tool.name, this.mode),
+        ),
       );
     }
     this.toolCatalog = catalog;
@@ -3539,6 +3590,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
   private isCoreTool(name: string): boolean {
     return (
       name === CONTEXT_COMPACTION_TOOL_NAME ||
+      retainModeToolDeclaration(name) ||
       MODE_TRANSITION_TOOL_NAMES.has(name) ||
       // The whole delegation lifecycle stays in the core set rather than the
       // on-demand catalog: a capability the model has to go looking for is one
@@ -3892,7 +3944,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
     }
     if (this.scratchDir && (tools.has("Bash") || tools.has("Write"))) {
       blocks.push(
-        `Write temporary and intermediate files into the session scratch directory \`${this.scratchDir}\` (in Bash: $PI_SCRATCH_DIR) using absolute paths, never into the workspace.`,
+        `Write temporary and intermediate files into the session scratch directory \`${formatScratchDirForShell(this.commandShell, this.scratchDir)}\` (in Bash: ${shellScratchVariable(this.commandShell)}) using absolute paths, never into the workspace.`,
       );
     }
     if (tools.has(SKILL_TOOL_NAME)) {
@@ -4352,6 +4404,8 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
             sessionId: this.sessionId,
             turnId: this.turnId,
             parentToolCallId: toolCallId,
+            delegationId: record.delegationId,
+            scratchDir: this.scratchDir,
             task,
             provider,
             infiniteProviderRetry: this.infiniteProviderRetry,
@@ -4677,6 +4731,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
     const tagged: UiMessage = {
       ...row,
       parentToolCallId: envelope.parentToolCallId ?? row.parentToolCallId,
+      nestedParentToolCallId: envelope.nestedParentToolCallId ?? row.nestedParentToolCallId,
       agentName: envelope.agentName ?? row.agentName,
     };
     const key =
@@ -4710,6 +4765,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
       toolStatus: event.isError ? "error" : "success",
       isError: Boolean(event.isError),
       parentToolCallId: envelope.parentToolCallId,
+      nestedParentToolCallId: envelope.nestedParentToolCallId,
       agentName: envelope.agentName,
     };
   }
@@ -4882,7 +4938,7 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
         ),
       }),
       executionMode: "sequential",
-      execute: async (toolCallId, params, signal) => {
+      execute: async (_toolCallId, params, signal) => {
         const ids =
           isRecord(params) && Array.isArray(params.delegationIds)
             ? params.delegationIds.map(String)
@@ -4946,6 +5002,9 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
           startedAt: record.startedAt,
           ...(record.completedAt ? { completedAt: record.completedAt } : {}),
           ...(record.result?.error ? { error: record.result.error } : {}),
+          ...(record.result?.scratchReportPath
+            ? { scratchReportPath: record.result.scratchReportPath }
+            : {}),
           report:
             record.status === "running"
               ? formatDelegationHeartbeat(record)
@@ -5336,17 +5395,22 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
     for (const raw of params.questions) {
       if (!isRecord(raw)) return undefined;
       const question = typeof raw.question === "string" ? raw.question.trim() : "";
-      const options = Array.isArray(raw.options)
-        ? raw.options
-            .filter((option): option is string => typeof option === "string")
-            .map((option) => option.trim())
-            .filter(Boolean)
-        : [];
+      const options: AskToolQuestion["options"] = [];
+      const seenLabels = new Set<string>();
+      if (Array.isArray(raw.options)) {
+        for (const rawOption of raw.options) {
+          const option = normalizeAskToolOption(rawOption);
+          if (!option) continue;
+          const label = askToolOptionLabel(option);
+          if (seenLabels.has(label)) continue;
+          seenLabels.add(label);
+          options.push(option);
+        }
+      }
       if (!question || options.length === 0) return undefined;
-      const uniqueOptions = [...new Set(options)];
       questions.push({
         question,
-        options: uniqueOptions,
+        options,
         ...(raw.multiSelect === true ? { multiSelect: true } : {}),
       });
     }
@@ -6792,12 +6856,14 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
     preparation: ShapedPreparation,
     signal: AbortSignal,
   ): Promise<Awaited<ReturnType<typeof compact>>> {
+    const usageTurnId = this.turnId;
     return compact(
       preparation,
       // The summary is a provider request like any other turn, but
       // pi-agent-core builds its options itself and never reaches `streamFn`,
       // so the headers have to ride on the collection.
-      withCompactionRequestHeaders(this.models, this.provider, this.sessionId),
+      withCompactionRequestHeaders(this.models, this.provider, this.sessionId,
+        usage => this.emit({ type: "usage", usage }, usageTurnId)),
       this.model,
       undefined,
       agentThinkingLevel(this.thinkingLevel),
@@ -7816,7 +7882,6 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
     // Claims are message-scoped: a later prompt must observe edited or newly
     // created instruction files instead of reusing a previous chain.
     this.pathInstructionClaims.clear();
-    this.hostTurnId = durableTurnId;
     this.turnId = durableTurnId;
     this.acceptingSteering = true;
     this.pendingUserMessageId = undefined;
@@ -7924,7 +7989,6 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
       : input;
     this.retainPendingSteering();
     const nextTurnId = durableTurnId?.trim() || randomUUID();
-    this.hostTurnId = nextTurnId;
     this.turnId = nextTurnId;
     this.acceptingSteering = true;
     this.gracefulStopRequested = false;
@@ -8052,19 +8116,11 @@ Do not invent objections or turn speculative risks into blockers. Stop when the 
     }
     if (!runner.hasHandlers("before_agent_start")) return;
     const base = this.composeSystemPrompt();
-    const result = await runner.emit<{ systemPrompt?: string }>(
-      "before_agent_start",
-      {
-        type: "before_agent_start",
-        prompt: typeof input === "string" ? input : input.text,
-        systemPrompt: base,
-        systemPromptOptions: {},
-      },
-      (acc, next) => ({ ...(acc ?? {}), ...next }),
+    const prompt = await runner.emitBeforeAgentStart(
+      typeof input === "string" ? input : input.text,
+      base,
     );
-    this.setAgentSystemPrompt(
-      typeof result?.systemPrompt === "string" ? result.systemPrompt : base,
-    );
+    this.setAgentSystemPrompt(prompt ?? base);
   }
   /**
    * `before_provider_request` rides pi-ai's `onPayload`, `after_provider_response`

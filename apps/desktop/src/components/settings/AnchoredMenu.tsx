@@ -139,8 +139,7 @@ export function AnchoredMenu({
       onClose();
       return;
     }
-    // CSS entrance transforms change getBoundingClientRect() while the menu is
-    // animating. Position against its layout size so later updates cannot jump.
+    // getBoundingClientRect includes the menu's entrance scale; anchoring must use its layout box.
     const menuWidth = menu.offsetWidth;
     const menuHeight = menu.offsetHeight;
     const width = matchAnchorWidth ? anchorRect.width : undefined;

@@ -1,8 +1,26 @@
 # Unreleased changes
 
-- Skills now discovers installed pi CLI npm skill packages and offers explicit
-  import with a source and executable-extension confirmation. Imported packages
-  remain managed in Plugins; discovery never enables code automatically.
+- `/compact` and automatic context compaction work again on a gateway that
+  fronts a Codex backend. The summary request of a checkpoint now carries the
+  conversation identity every other turn of the session sends
+  (`prompt_cache_key`), instead of being the one request the gateway answers
+  with `400 invalid codex request`.
+
+- Claude models on a GitHub Copilot account no longer fail with "missing
+  required Authorization header". Their Anthropic Messages requests now
+  authenticate with `Authorization: Bearer` instead of sending the Copilot
+  token as `X-Api-Key`.
+
+- Google Gemini rows send requests again. A provider row on the native
+  generative-AI endpoint no longer hands pi-ai's Google adapter the internal
+  response-capture `fetch` it refuses before the request leaves, custom provider
+  headers still reach Google, and an adapter refusal now fails the turn instead
+  of spending all ten transient retries on it (issue #1072).
+
+- Deleting a provider no longer leaves a dangling image-generation default.
+  An image default or marked candidate whose provider row is gone is dropped
+  on the next settings read or write, instead of staying stored as a binding
+  every generation request rejects as an unavailable model.
 
 - Subagent topology cards and their live process rows now follow the main
   conversation's responsive width behavior: long descriptions, paths,

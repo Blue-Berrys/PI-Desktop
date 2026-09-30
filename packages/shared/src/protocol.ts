@@ -2,7 +2,7 @@ export const PROTOCOL_VERSION = 11 as const;
 export const SCHEMA_VERSION = 16 as const;
 export const APP_ID = "net.aiuo.pi-desktop";
 export const APP_NAME = "PI-Desktop";
-export const APP_VERSION = "0.15.7-beta.1";
+export const APP_VERSION = "0.15.10";
 
 export const APP_MENU_COMMANDS = [
   "newTask",
@@ -91,6 +91,17 @@ export const IPC = {
     voiceUpdateSettings: "pi-desktop/voice/updateSettings",
     voiceCheckPermission: "pi-desktop/voice/checkPermission",
     voiceRequestPermission: "pi-desktop/voice/requestPermission",
+    liveVoiceStatus: "pi-desktop/voice/live/status",
+    liveVoicePrepare: "pi-desktop/voice/live/prepare",
+    liveVoiceConnect: "pi-desktop/voice/live/connect",
+    liveVoiceSetMuted: "pi-desktop/voice/live/setMuted",
+    liveVoiceReportMedia: "pi-desktop/voice/live/reportMedia",
+    liveVoiceReportPlayback: "pi-desktop/voice/live/reportPlayback",
+    liveVoiceReportDelegation: "pi-desktop/voice/live/reportDelegation",
+    liveVoiceReportControlApplied: "pi-desktop/voice/live/reportControlApplied",
+    liveVoiceEnd: "pi-desktop/voice/live/end",
+    liveVoiceHeartbeat: "pi-desktop/voice/live/heartbeat",
+    liveVoiceResolveWorkSelection: "pi-desktop/voice/live/work/resolveSelection",
     agentCompact: "pi-desktop/agent/compact",
     agentAbort: "pi-desktop/agent/abort",
     agentStop: "pi-desktop/agent/stop",
@@ -166,7 +177,6 @@ export const IPC = {
     projectSet: "pi-desktop/project/set",
     projectClear: "pi-desktop/project/clear",
     projectRemove: "pi-desktop/project/remove",
-    pullsList: "pi-desktop/pulls/list",
     scheduledList: "pi-desktop/scheduled/list",
     scheduledCreate: "pi-desktop/scheduled/create",
     scheduledUpdate: "pi-desktop/scheduled/update",
@@ -175,6 +185,7 @@ export const IPC = {
     scheduledExecute: "pi-desktop/scheduled/execute",
     scheduledListRuns: "pi-desktop/scheduled/listRuns",
     toolResolvePermission: "pi-desktop/tool/resolvePermission",
+    todosGet: "pi-desktop/todos/get",
     askToolResolve: "pi-desktop/agent/askTool/resolve",
     plansPending: "pi-desktop/plans/pending",
     plansResolve: "pi-desktop/plans/resolve",
@@ -230,9 +241,9 @@ export const IPC = {
     providersOauthCancel: "pi-desktop/providers/oauth/cancel",
     providersOauthDelete: "pi-desktop/providers/oauth/delete",
     pluginList: "pi-desktop/plugin/list",
+    /** A renderer slot component asking its own plugin for one JSON answer. */
+    pluginRendererCall: "pi-desktop/plugin/rendererCall",
     /** Plugin-contributed agent extensions (D387/D388, ADR 0214). */
-    piSkillDiscover: "pi-desktop/plugin/discoverPiSkills",
-    piSkillImport: "pi-desktop/plugin/importPiSkills",
     pluginImportExtension: "pi-desktop/plugin/importExtension",
     extensionsCommandRun: "pi-desktop/extensions/commands/run",
     extensionsUiRespond: "pi-desktop/extensions/ui/respond",
@@ -382,12 +393,18 @@ export const IPC = {
     notificationChanged: "pi-desktop/notification/event/changed",
     sessionsChanged: "pi-desktop/session/event/changed",
     notificationActivated: "pi-desktop/notification/event/activated",
+    notificationSound: "pi-desktop/notification/event/sound",
     plansChanged: "pi-desktop/plans/event/changed",
+    todosChanged: "pi-desktop/todos/event/changed",
     providersOauth: "pi-desktop/providers/oauth/event",
     mcpOauth: "pi-desktop/mcp/oauth/event",
     updatesState: "pi-desktop/updates/event/state",
     voiceStateChanged: "pi-desktop/voice/event/stateChanged",
     voiceModelProgress: "pi-desktop/voice/event/modelProgress",
+    liveVoiceChanged: "pi-desktop/voice/live/event/changed",
+    liveVoicePort: "pi-desktop/voice/live/event/port",
+    liveVoiceControl: "pi-desktop/voice/live/event/control",
+    liveVoiceTranscript: "pi-desktop/voice/live/event/transcript",
   },
 } as const;
 

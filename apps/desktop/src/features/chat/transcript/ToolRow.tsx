@@ -13,6 +13,8 @@ import {
 import { useTranslation } from "react-i18next";
 import type { UiMessage } from "@pi-desktop/shared";
 import { useOpenPreviewTarget } from "../../../hooks/use-preview-target";
+import { useChatFileMenu } from "../../../hooks/use-chat-file-menu";
+import { ContextMenu } from "../../../components/ContextMenu";
 import { useFollowScroll } from "../../../hooks/use-follow-scroll";
 import { getToolPreviewTarget } from "../../../lib/chat-links";
 import { disclosureKey } from "./disclosure";
@@ -78,6 +80,8 @@ import {
   delegateModelId,
   delegateThinkingLevel,
 } from "./model";
+import { PluginToolCard } from "./PluginToolCard";
+import { useSlotEntryForKey } from "../../../plugins/renderer-slots/use-slots";
 
 type ToolRowProps = {
   message: UiMessage;
@@ -140,7 +144,27 @@ function toolRowPropsEqual(
   );
 }
 
-export const ToolRow = memo(function ToolRow({
+/**
+ * One tool call. A call of a plugin's own tool renders the card that plugin
+ * registered for it (the `toolCard` slot); the host card below is its
+ * fallback, and the only card for every other call. Topology nodes and
+ * denied rows always keep the host card.
+ */
+export const ToolRow = memo(function ToolRow(props: ToolRowProps) {
+  const { message, variant = "default" } = props;
+  const cardEntry = useSlotEntryForKey(
+    "toolCard",
+    variant === "default" && message.toolStatus !== "denied" ? message.toolName : undefined,
+  );
+  const hostRow = <HostToolRow {...props} />;
+  return cardEntry ? (
+    <PluginToolCard key={cardEntry.id} entry={cardEntry} message={message} fallback={hostRow} />
+  ) : (
+    hostRow
+  );
+}, toolRowPropsEqual);
+
+function HostToolRow({
   message,
   delegate,
   variant = "default",
@@ -154,6 +178,7 @@ export const ToolRow = memo(function ToolRow({
   const detailsId = useId();
   const root = useAppStore((s) => s.workspace?.path);
   const openTarget = useOpenPreviewTarget();
+  const { fileMenu, openFileMenu, closeFileMenu } = useChatFileMenu();
   const openSubagentTab = useAppStore((s) => s.openSubagentTab);
   const activeWorkPanelTabId = useAppStore((s) => s.activeWorkPanelTabId);
   const status = message.toolStatus;
@@ -484,6 +509,12 @@ export const ToolRow = memo(function ToolRow({
                       }
                     : undefined
                 }
+                onContextMenu={
+                  previewTarget?.kind === "file"
+                    ? (event) =>
+                        openFileMenu(event, { path: previewTarget.path })
+                    : undefined
+                }
               >
                 {summary}
               </span>
@@ -559,9 +590,10 @@ export const ToolRow = memo(function ToolRow({
           onCollapse={collapseRow}
         />
       ) : null}
+      <ContextMenu state={fileMenu} onClose={closeFileMenu} />
     </div>
   );
-}, toolRowPropsEqual);
+}
 
 /**
  * What a delegate did, nested under the `Task` call that spawned it.

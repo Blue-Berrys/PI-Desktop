@@ -42,7 +42,6 @@ import {
   IconPlus,
   IconTrash,
 } from "../icons";
-import { PiSkillDiscoveryPanel } from "./PiSkillDiscoveryPanel";
 import { SkillMarketPanel } from "./SkillMarketPanel";
 
 import { TooltipButton } from "../ui";
@@ -259,6 +258,19 @@ export function AgentSkillsPage() {
           showToast(t("settings.skillImported", { name: result.skill.name }), {
             variant: "success",
           });
+        }
+        if (result.imported?.length) {
+          showToast(t("settings.skillBatchImported", { count: result.imported.length }), {
+            variant: "success",
+          });
+        }
+        if (result.failed?.length) {
+          const first = result.failed[0];
+          const folder = first.path.split(/[\\/]/).filter(Boolean).at(-1) ?? first.path;
+          showToast(t("settings.skillBatchFailed", {
+            count: result.failed.length,
+            first: `${folder}: ${first.error}`,
+          }), { variant: "error" });
         }
       }
     } catch (error) {
@@ -539,7 +551,6 @@ export function AgentSkillsPage() {
         />
       }
     >
-      <PiSkillDiscoveryPanel />
       <CapabilityPanel
         loading={loading}
         refreshing={refreshing}

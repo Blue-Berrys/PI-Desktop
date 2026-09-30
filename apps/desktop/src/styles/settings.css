@@ -359,10 +359,35 @@
 }
 
 /* The heading's help mark sits beside the heading rather than inside it: a
-   nested button would join the heading's accessible name. */
+   nested button would join the heading's accessible name.
+   The 10px gap below the heading belongs to this flex row: a margin inside it
+   would extend the icon's centering box and lift the question mark off the
+   heading text. */
 .settings-card-heading-help {
   display: flex;
   align-items: center;
+  margin-bottom: 10px;
+}
+
+.settings-card-heading-help .settings-card-heading {
+  margin-bottom: 0;
+}
+
+/* A card heading that carries a card-level action keeps heading, help mark and
+   action on one line, centered on each other. */
+.settings-card-heading-row.settings-card-heading-with-action {
+  align-items: center;
+}
+
+.settings-card-heading-row.settings-card-heading-with-action .settings-card-heading-help {
+  min-width: 0;
+  margin-bottom: 0;
+}
+
+.settings-card-heading-row.settings-card-heading-with-action
+  .settings-card-heading-help
+  .settings-card-heading {
+  margin-bottom: 0;
 }
 
 .settings-card-heading-row {
@@ -423,7 +448,6 @@
 .settings-panel:has(> .settings-row),
 .settings-panel.shortcut-map,
 .settings-panel.agent-capability-panel,
-.settings-panel.provider-list-panel:has(> .provider-row-list),
 .settings-panel.model-provider-panel:has(> .model-provider-list) {
   gap: 6px;
   background: transparent;
@@ -490,7 +514,8 @@
   gap: 8px;
 }
 
-.settings-config-sync > .settings-card-block:first-child .settings-config-sync-actions {
+.settings-config-sync > .settings-card-block:first-child .settings-config-sync-actions,
+.settings-config-sync > .settings-card-block:first-of-type .settings-config-sync-actions {
   padding: 0 16px 14px;
 }
 
@@ -504,6 +529,15 @@
 .settings-config-sync-message.error,
 .settings-config-sync-error {
   color: var(--ds-danger);
+}
+
+.settings-config-sync-refresh {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 16px;
+  color: var(--ds-text-muted);
+  font-size: var(--text-sm);
 }
 
 /*
@@ -1704,7 +1738,7 @@
  * One workbench per page: a description line, a single toolbar (level filter
  * with counts, one search field, project picker, primary actions), then one
  * elevated panel whose rows are divided by level group headers. Rows follow
- * the provider-row rhythm, lists flow at natural height, and loading/empty
+ * the service-row rhythm, lists flow at natural height, and loading/empty
  * states reuse the same row anatomy.
  */
 
@@ -1991,7 +2025,7 @@
   gap: 6px;
 }
 
-/* Rows follow the provider-row rhythm: quiet icon, name + badges, meta. */
+/* Rows follow the service-row rhythm: quiet icon, name + badges, meta. */
 .agent-capability-row {
   display: flex;
   align-items: center;
@@ -2268,12 +2302,14 @@
 }
 
 /*
-  The menu floats over a `#212121` panel, and the shared elevated gray is only
-  `#282828` — too close to read as detached. Light mode keeps the plain white
-  surface, where the ring and drop shadow already separate it.
+  The menu floats over the settings panel (--ds-bg-secondary, #212121 in the
+  built-in dark) and the shared elevated gray is only #282828 — too close to
+  read as detached. Light mode keeps the plain white surface, where the ring
+  and drop shadow already separate it. Both colours ride tokens so a
+  contributed theme can move the plate with the rest of the settings chrome.
 */
 :root[data-theme="dark"] .agent-capability-menu {
-  background: color-mix(in oklab, var(--gray-0) 8%, var(--gray-800));
+  background: color-mix(in oklab, var(--ds-text-primary) 8%, var(--ds-bg-secondary));
   box-shadow:
     0 0 0 0.5px var(--ds-border-strong),
     0 12px 32px rgb(0 0 0 / 44%);
@@ -2857,7 +2893,7 @@
 }
 
 .mcpm-search .field-input:focus-visible {
-  border-color: color-mix(in oklab, var(--gray-0) 32%, transparent);
+  border-color: color-mix(in oklab, var(--ds-text-primary) 32%, transparent);
   box-shadow: 0 0 0 3px var(--ds-tile-deep);
 }
 
@@ -2922,7 +2958,7 @@
 
 .mcpm-card:hover {
   transform: translateY(-2px);
-  border-color: color-mix(in oklab, var(--gray-0) 20%, transparent);
+  border-color: color-mix(in oklab, var(--ds-text-primary) 20%, transparent);
   background: var(--ds-tile-hover);
   box-shadow: 0 10px 28px color-mix(in oklab, #000 24%, transparent);
 }
@@ -3362,7 +3398,7 @@
 }
 
 .sklm-search .field-input:focus-visible {
-  border-color: color-mix(in oklab, var(--gray-0) 32%, transparent);
+  border-color: color-mix(in oklab, var(--ds-text-primary) 32%, transparent);
   box-shadow: 0 0 0 3px var(--ds-tile-deep);
 }
 
@@ -3427,7 +3463,7 @@
 
 .sklm-card:hover {
   transform: translateY(-2px);
-  border-color: color-mix(in oklab, var(--gray-0) 20%, transparent);
+  border-color: color-mix(in oklab, var(--ds-text-primary) 20%, transparent);
   background: var(--ds-tile-hover);
   box-shadow: 0 10px 28px color-mix(in oklab, #000 24%, transparent);
 }
@@ -3787,16 +3823,4 @@
 
 .sklm-page-jump::placeholder {
   color: var(--ds-text-muted);
-}
-
-/* Discovered local package paths remain readable at narrow settings widths. */
-.pi-skill-discovery .settings-row-detail {
-  overflow-wrap: anywhere;
-}
-.pi-skill-discovery .settings-row {
-  margin-top: 8px;
-  flex-wrap: wrap;
-}
-.pi-skill-discovery .settings-row-copy {
-  flex-basis: 240px;
 }

@@ -38,16 +38,31 @@ const marketplaceSettingsSource = await readFile(
   ),
   "utf8",
 );
-const vendorAccountsSource = await readFile(
-  new URL("../src/components/settings/VendorAccountsSection.tsx", import.meta.url),
+// API services and vendor accounts share one list (D625).
+const serviceListSource = await readFile(
+  new URL("../src/components/settings/ServiceList.tsx", import.meta.url),
+  "utf8",
+);
+const serviceRowSource = await readFile(
+  new URL("../src/components/settings/ServiceRow.tsx", import.meta.url),
+  "utf8",
+);
+const serviceRowStatusSource = await readFile(
+  new URL("../src/components/settings/service-row-status.ts", import.meta.url),
+  "utf8",
+);
+// Account lifecycle (remove with default repair, save) lives in the hook.
+const vendorAccountsHookSource = await readFile(
+  new URL("../src/components/settings/useVendorAccounts.ts", import.meta.url),
   "utf8",
 );
 const vendorAccountDialogSource = await readFile(
   new URL("../src/components/settings/VendorAccountDialog.tsx", import.meta.url),
   "utf8",
 );
-const vendorPickerSource = await readFile(
-  new URL("../src/components/settings/VendorPickerDialog.tsx", import.meta.url),
+// Subscriptions are picked in the service chooser since D625.
+const serviceChooserSource = await readFile(
+  new URL("../src/components/settings/ServiceChooser.tsx", import.meta.url),
   "utf8",
 );
 const oauthSource = await readFile(
@@ -101,12 +116,16 @@ const networkProxySource = await readFile(
   new URL("../src/components/settings/NetworkProxySection.tsx", import.meta.url),
   "utf8",
 );
+const voiceSettingsSource = await readFile(
+  new URL("../src/features/settings/voice/VoiceSettingsSection.tsx", import.meta.url),
+  "utf8",
+);
 
 test("Basics and AI tabs expose their respective app and AI controls", () => {
   const generalStart = settingsPageSource.indexOf('{tab === "general" && settings && (');
   const aiStart = settingsPageSource.indexOf('{tab === "ai" && settings && (');
   const voiceStart = settingsPageSource.indexOf(
-    '{tab === "voice" && settings && (',
+    '{tab === "voice" && !tabHidden && settings && (',
   );
   const generalSource = settingsPageSource.slice(generalStart, aiStart);
   const aiSource = settingsPageSource.slice(aiStart, voiceStart);
@@ -163,8 +182,11 @@ test("Basics and AI tabs expose their respective app and AI controls", () => {
   assert.doesNotMatch(aiSource, /<select/);
   // Voice owns a separate destination; the AI tab does not duplicate it.
   assert.doesNotMatch(aiSource, /VoiceSettingsCard|VoiceSettingsSection|voice-settings/);
-  assert.match(settingsPageSource, /tab === "voice" && settings && [\s\S]*?<VoiceSettingsSection/);
-
+  assert.match(settingsPageSource, /tab === "voice" && !tabHidden && settings && [\s\S]*?<VoiceSettingsSection/);
+  assert.match(voiceSettingsSource, /LiveVoiceSettings as VoiceSettingsSection/);
+  assert.doesNotMatch(voiceSettingsSource, /voiceIpc|voiceEnable|voiceMicrophone|voiceModel/);
+  assert.doesNotMatch(settingsSearchSource, /settings\.voiceEnable|settings\.voiceMicrophone|settings\.voiceModel/);
+  assert.match(settingsSearchSource, /liveVoice\.enable/);
   assert.doesNotMatch(settingsSearchSource, /settings\.speech/);
   assert.doesNotMatch(stylesSource, /\.settings-speech/);
   assert.doesNotMatch(enLocaleSource, /speechTitle:|speechVoicePlaceholder:/);
@@ -281,8 +303,11 @@ test("default model selector shows every configured model under its provider", (
   assert.match(stylesSource, /scrollbar-gutter: stable/);
 });
 
-test("model configuration separates AI services from independently removable vendor accounts", () => {
-  assert.match(providersSource, /authKind !== OAUTH_AUTH_KIND/);
+test("model configuration lists AI services and vendor accounts together", () => {
+  // One list (D625): nothing filters OAuth rows out, and no second section.
+  assert.doesNotMatch(providersSource, /authKind !== OAUTH_AUTH_KIND/);
+  assert.doesNotMatch(providersSource, /VendorAccountsSection/);
+  assert.match(providersSource, /<ServiceList\s+providers=\{providers\}/);
   // Readiness (a key, an OAuth account, or a no-auth provider) now lives in the
   // shared helper, so the page must delegate to it instead of re-inlining the
   // rule next to a second copy that can drift from the picker.
@@ -293,44 +318,73 @@ test("model configuration separates AI services from independently removable ven
   );
   assert.doesNotMatch(providersSource, /provider-config-hero/);
   assert.doesNotMatch(providersSource, /settings-section-subtitle/);
-  assert.match(vendorAccountsSource, /api\.deleteOauthAccount\(account\.providerId\)/);
-  assert.match(vendorAccountsSource, /api\.updateProvider\(/);
-  assert.match(vendorAccountsSource, /oauthAccountLabel: form\.name\.trim\(\)/);
-  assert.match(vendorAccountsSource, /defaultModelId: form\.modelId\.trim\(\)/);
-  assert.match(vendorAccountsSource, /models: form\.models/);
-  assert.match(vendorAccountsSource, /api\.testProvider\(provider\.id\)/);
-  assert.match(vendorAccountsSource, /VendorAccountDialog/);
+  // An account row still lives and dies through the vendor-account editor and
+  // deleteOauthAccount, never through the provider CRUD.
   assert.match(
-    vendorAccountsSource,
-    /<Button\s+variant="primary"[\s\S]*vendorAddAccount/,
+    providersSource,
+    /serviceRowKind\(provider\) === "account"\s*\?\s*setEditingAccountId\(provider\.id\)\s*:\s*setSetupFor\(provider\.id\)/,
   );
-  assert.doesNotMatch(vendorAccountsSource, /settings-section-subtitle/);
-  assert.match(vendorAccountsSource, /settings-panel provider-list-panel/);
-  assert.match(vendorAccountsSource, /provider-row-list/);
-  assert.match(vendorAccountsSource, /"provider-row",\s*"vendor-account-row"/);
-  assert.doesNotMatch(vendorAccountsSource, /vendor-card/);
-  assert.match(stylesSource, /\.provider-row\.vendor-account-row\.is-disconnected/);
+  assert.match(
+    providersSource,
+    /serviceRowKind\(provider\) === "account"\s*\?\s*removeAccount\(provider\)\s*:\s*removeProvider\(provider\)/,
+  );
+  assert.match(providersSource, /<VendorAccountDialog/);
+  assert.match(providersSource, /api\.testProvider\(provider\.id\)/);
+  assert.match(vendorAccountsHookSource, /api\.deleteOauthAccount\(provider\.id\)/);
+  assert.match(vendorAccountsHookSource, /api\.updateProvider\(/);
+  assert.match(vendorAccountsHookSource, /oauthAccountLabel: form\.name\.trim\(\)/);
+  assert.match(vendorAccountsHookSource, /defaultModelId: form\.modelId\.trim\(\)/);
+  assert.match(vendorAccountsHookSource, /models: form\.models/);
   assert.doesNotMatch(stylesSource, /\.vendor-card-list/);
+  assert.doesNotMatch(stylesSource, /vendor-account-row/);
   // Both credential kinds now pick from the same live, service-provided list.
   assert.match(vendorAccountDialogSource, /useProviderModels/);
   assert.match(vendorAccountDialogSource, /<ModelSelectionPanes/);
+  assert.doesNotMatch(vendorAccountDialogSource, /<ChosenModelsSummary/);
   assert.match(vendorAccountDialogSource, /modelId: persisted\[0\]\.id/);
-  assert.match(vendorAccountsSource, /providerIsReady/);
-  assert.match(vendorAccountsSource, /defaultProviderId: next\?\.id \?\? ""/);
-  assert.match(vendorAccountsSource, /useAppStore\.setState\(\{ settings: nextSettings \}\)/);
-  assert.match(vendorPickerSource, /existing accounts do not disable a vendor/);
-  assert.match(vendorPickerSource, /vendors\.map/);
+  assert.match(vendorAccountsHookSource, /providerIsReady/);
+  assert.match(vendorAccountsHookSource, /defaultProviderId: next\?\.id \?\? ""/);
+  assert.match(vendorAccountsHookSource, /useAppStore\.setState\(\{ settings: nextSettings \}\)/);
+  assert.match(serviceChooserSource, /existing accounts do not disable a\s+vendor/);
+  assert.match(serviceChooserSource, /vendors\.map/);
 });
 
-test("vendor account rows keep the summary line to one account name", () => {
-  const accountMeta =
-    vendorAccountsSource.match(
-      /<div className="provider-row-meta">[\s\S]*?<\/div>/,
-    )?.[0] ?? "";
-  assert.match(accountMeta, /vendor-account-label/);
-  assert.match(accountMeta, /\{accountName\}/);
-  assert.match(accountMeta, /\{duplicateLabel\}/);
-  assert.doesNotMatch(accountMeta, /defaultModelId|provider-meta-dot|font-mono/);
+test("a service row opens its editor and keeps only a switch and one menu", () => {
+  // The row is the way in; every other action sits in the overflow menu.
+  assert.match(serviceRowSource, /<CapabilityRowMenu/);
+  assert.doesNotMatch(serviceRowSource, /IconPencil|IconTrash|IconCopy|IconPlug|IconStar/);
+  assert.match(serviceListSource, /IconPencil[\s\S]*IconTrash/);
+  // The click sits on the row so a card drag can start anywhere on it, while
+  // presses on the row's own controls never open the editor.
+  assert.match(serviceRowSource, /const OWN_CONTROLS = "button, input, select, textarea, a, label/);
+  assert.match(serviceRowSource, /event\.target !== event\.currentTarget \|\| !onOpen \|\| busy/);
+  // An account has no enable switch; a plugin's switch belongs to the plugin.
+  assert.match(serviceRowSource, /kind !== "account" \? \(/);
+  assert.match(serviceRowSource, /disabled=\{busy \|\| kind === "plugin"\}/);
+  // A plugin owns its row, so neither edit nor remove is offered for one.
+  assert.match(serviceListSource, /if \(kind !== "plugin"\) \{\s*items\.push\(\{\s*key: "edit"/);
+  assert.match(serviceListSource, /if \(kind !== "plugin"\) \{\s*const isArmed/);
+  // Removal is confirmed inside the menu rather than by a second row button.
+  assert.match(serviceListSource, /useArmedDelete\(\)/);
+  assert.match(serviceListSource, /settings\.capabilityRemoveConfirm/);
+  // D297: the plugin key entry is set apart by spacing, never by a rule.
+  const keyEntry = stylesSource.match(/\.model-provider-key-entry\s*\{([^}]*)\}/)?.[1];
+  assert.ok(keyEntry, ".model-provider-key-entry rule is missing");
+  assert.doesNotMatch(keyEntry, /border/);
+});
+
+test("vendor account rows keep the summary to one account name", () => {
+  // The account sits in the title beside its vendor; the meta line holds only
+  // what service-row-status derives, never the default model id.
+  assert.match(
+    serviceRowSource,
+    /<span className="model-provider-row-account">\{title\.account\}<\/span>/,
+  );
+  assert.doesNotMatch(serviceRowSource, /defaultModelId|font-mono/);
+  assert.match(
+    serviceRowStatusSource,
+    /return provider\.hasOauth \? \[models\] : \[t\("settings\.vendorDisconnectedDesc"\)\]/,
+  );
 });
 
 test("OAuth account identity is provider-scoped across IPC and pi-ai", () => {
@@ -477,4 +531,17 @@ test("native select menus keep readable theme colors across the app on Windows",
     stylesSource,
     /:root\[data-theme="light"\]\s*\{[^}]*color-scheme:\s*light;/s,
   );
+});
+
+test("Live Voice account cards show their options only after a provider is chosen", async () => {
+  const source = await readFile(
+    new URL("../src/features/settings/voice/LiveVoiceSettings.tsx", import.meta.url),
+    "utf8",
+  );
+  // A card with no provider account bound is the picker and nothing else: the
+  // model, voice, and protocol rows belong to a chosen binding instead of
+  // rendering as empty disabled controls.
+  assert.match(source, /\{current && adapter !== "codex-live" \? \(/);
+  assert.match(source, /\{current && adapter === "openai-realtime" \? \(/);
+  assert.doesNotMatch(source, /disabled=\{!current/);
 });
