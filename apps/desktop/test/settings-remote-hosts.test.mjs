@@ -15,6 +15,10 @@ const page = readFileSync(
   new URL("../src/components/settings/RemoteHostsPage.tsx", import.meta.url),
   "utf8",
 );
+const settingsNav = readFileSync(
+  new URL("../src/lib/settings-search.ts", import.meta.url),
+  "utf8",
+);
 const settings = readSettingsSourceSync();
 const styles = loadStylesSync();
 
@@ -26,7 +30,10 @@ function cssRule(selector) {
 
 test("remote hosts is an inventory plus one SSH/Pair add form", () => {
   assert.match(page, /role="tablist"/);
-  assert.match(page, /aria-controls={`remote-host-add-panel-\$\{mode\}`}/);
+  for (const mode of ["ssh", "pair"]) {
+    assert.ok(page.includes(`id: "remote-host-add-${mode}"`));
+    assert.ok(page.includes(`controls: "remote-host-add-panel-${mode}"`));
+  }
   assert.match(page, /id={`remote-host-add-panel-\$\{mode\}`}|id="remote-host-add-panel-ssh"/);
   assert.match(page, /hidden=\{addMode !== "ssh"\}/);
   assert.match(page, /hidden=\{addMode !== "pair"\}/);
@@ -49,8 +56,12 @@ test("remote hosts omits instructional copy", () => {
 });
 
 test("the remote-hosts destination is marked experimental", () => {
-  assert.match(settings, /item\.id === "remoteHosts"/);
-  assert.match(settings, /settings\.remoteHosts\.experimental/);
+  assert.match(
+    settingsNav,
+    /\{\s*id: "remoteHosts",[\s\S]*?experimentalBadgeKey: "settings\.remoteHosts\.experimental",/,
+  );
+  assert.match(settings, /item\.experimentalBadgeKey \? \(/);
+  assert.match(settings, /activeNavItem\?\.experimentalBadgeKey \? \(/);
   assert.match(settings, /className="settings-nav-experimental"/);
   assert.match(cssRule(".settings-nav-experimental"), /font-size:\s*var\(--text-2xs\)/);
   assert.doesNotMatch(page, /EXPERIMENTAL_FEATURES/);

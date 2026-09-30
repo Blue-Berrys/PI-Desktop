@@ -17,7 +17,6 @@ import type {
   SpeechSynthesizeRequest,
   SpeechSynthesizeResult,
   SpeechTranscribeRequest,
-  SpeechTranscribeResult,
   SessionSummarizeTitleRequest,
   SessionSummarizeTitleResponse,
   AgentStopResponse,
@@ -72,7 +71,6 @@ import type {
   ProjectMemory,
   ProjectMemoryEntry,
   ProjectWorkspace,
-  PullRequestSummary,
   ScheduledTask,
   ProviderCreateInput,
   ProviderPublic,
@@ -111,9 +109,18 @@ import type {
   UpdateState,
   WindowControlAction,
   CloseBehavior,
+  ConfigSyncApprovalInput,
+  ConfigSyncChangePasswordInput,
+  ConfigSyncHistoryEntry,
+  ConfigSyncMapProjectInput,
+  ConfigSyncConfigureInput,
+  ConfigSyncRestoreInput,
+  ConfigSyncProgress,
+  ConfigSyncState,
   TrustedExtensionStatusEvent,
   TrustedExtensionUiPrompt,
   TrustedExtensionUiPromptResponse,
+  SessionTodoSnapshot,
 } from "@pi-desktop/shared";
 import {
   defaultCommandShellForPlatform,
@@ -122,8 +129,10 @@ import {
   normalizeLargePasteThreshold,
   normalizeMode,
   normalizeNetworkProxy,
+  normalizeNetworkPolicy,
   resolveFontScale,
   normalizeChatContentMaxWidth,
+  validateNetworkPolicy,
   validateNetworkProxy,
   validateSpeechSettings,
 } from "@pi-desktop/shared";
@@ -284,6 +293,7 @@ declare global {
     piDesktop?: {
       invoke: <T = unknown>(channel: string, ...args: unknown[]) => Promise<Result<T>>;
       on: (channel: string, listener: (...args: unknown[]) => void) => () => void;
+      onLiveVoicePort?: () => () => void;
       channels: typeof IPC;
       platform: NodeJS.Platform;
       /** Authoritative OS locale passed from the main process at window creation. */
@@ -344,9 +354,7 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
     ...settings,
     defaultMode: normalizeMode((settings as { defaultMode?: unknown }).defaultMode),
     infiniteProviderRetry:
-      (settings as { infiniteProviderRetry?: unknown }).infiniteProviderRetry === true
-        ? true
-        : undefined,
+      (settings as { infiniteProviderRetry?: unknown }).infiniteProviderRetry === true,
     defaultCommandShell: isCommandShellId(
       (settings as { defaultCommandShell?: unknown }).defaultCommandShell,
     )
@@ -359,6 +367,9 @@ export function normalizeSettings(settings: AppSettings): AppSettings {
     fontScale: resolveFontScale(settings),
     networkProxy: normalizeNetworkProxy(
       (settings as { networkProxy?: unknown }).networkProxy,
+    ),
+    networkPolicy: normalizeNetworkPolicy(
+      (settings as { networkPolicy?: unknown }).networkPolicy,
     ),
   };
 }
@@ -379,7 +390,11 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
     fontScale?: unknown;
     chatContentMaxWidth?: unknown;
     infiniteProviderRetry?: unknown;
+    smoothStreaming?: unknown;
+    updatePreference?: unknown;
+    lastNotifiedUpdateVersion?: unknown;
     networkProxy?: unknown;
+    networkPolicy?: unknown;
   };
   if (
     Object.prototype.hasOwnProperty.call(value, "defaultCommandShell") &&
@@ -422,6 +437,33 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
       errorCode: "INVALID_PARAMS",
     });
   }
+  if (
+    Object.prototype.hasOwnProperty.call(value, "smoothStreaming") &&
+    typeof value.smoothStreaming !== "boolean"
+  ) {
+    throw Object.assign(new Error("smoothStreaming is invalid"), {
+      errorCode: "INVALID_PARAMS",
+    });
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(value, "updatePreference") &&
+    value.updatePreference !== "automatic" &&
+    value.updatePreference !== "manual"
+  ) {
+    throw Object.assign(new Error("updatePreference is invalid"), {
+      errorCode: "INVALID_PARAMS",
+    });
+  }
+  if (
+    Object.prototype.hasOwnProperty.call(value, "lastNotifiedUpdateVersion") &&
+    (typeof value.lastNotifiedUpdateVersion !== "string" ||
+      value.lastNotifiedUpdateVersion.trim().length === 0 ||
+      value.lastNotifiedUpdateVersion.length > 128)
+  ) {
+    throw Object.assign(new Error("lastNotifiedUpdateVersion is invalid"), {
+      errorCode: "INVALID_PARAMS",
+    });
+  }
   if (Object.prototype.hasOwnProperty.call(value, "networkProxy")) {
     const proxy = validateNetworkProxy(value.networkProxy);
     if (!proxy.ok) {
@@ -430,6 +472,15 @@ export function validateSettingsWrite(settings: AppSettings): AppSettings {
       });
     }
     value.networkProxy = proxy.value;
+  }
+  if (Object.prototype.hasOwnProperty.call(value, "networkPolicy")) {
+    const policy = validateNetworkPolicy(value.networkPolicy);
+    if (!policy.ok) {
+      throw Object.assign(new Error(policy.error), {
+        errorCode: "INVALID_ARGUMENT",
+      });
+    }
+    value.networkPolicy = policy.value;
   }
   if (Object.prototype.hasOwnProperty.call(value, "speech")) {
     (value as AppSettings).speech = validateSpeechSettings(
@@ -506,6 +557,8 @@ export const api = {
     kind: "task" | "interactive";
     title: string;
     body: string;
+    /** Durable task timestamp used by Main to reject pre-dismissal replays. */
+    createdAt?: string;
   }) => invoke<{ shown: boolean }>(IPC.invoke.notificationShowNative, input),
   setNotificationViewingSession: (sessionId: string | null) =>
     invoke<{ ok: boolean }>(IPC.invoke.notificationSetViewingSession, {
@@ -585,6 +638,37 @@ export const api = {
   getSettings: () => invoke<AppSettings>(IPC.invoke.settingsGet).then(normalizeSettings),
   setSettings: (settings: AppSettings) =>
     invoke(IPC.invoke.settingsSet, validateSettingsWrite(settings)),
+  configSyncGetState: () => invoke<ConfigSyncState>(IPC.invoke.configSyncGetState),
+  configSyncConfigure: (input: ConfigSyncConfigureInput) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncConfigure, input),
+  configSyncTest: (input: Omit<ConfigSyncConfigureInput, "backupPassword"> & { backupPassword?: string }) =>
+    invoke<{
+      ok: boolean;
+      conditionalWrites: boolean;
+      appendOnly: boolean;
+      message?: string;
+    }>(
+      IPC.invoke.configSyncTest,
+      input,
+    ),
+  configSyncSyncNow: () => invoke<ConfigSyncState>(IPC.invoke.configSyncSyncNow),
+  configSyncPause: (paused: boolean) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncPause, { paused }),
+  configSyncUnlock: (backupPassword: string) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncUnlock, { backupPassword }),
+  configSyncApprove: (input: ConfigSyncApprovalInput) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncApprove, input),
+  configSyncReject: (input: ConfigSyncApprovalInput) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncReject, input),
+  configSyncMapProject: (input: ConfigSyncMapProjectInput) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncMapProject, input),
+  configSyncListHistory: () =>
+    invoke<ConfigSyncHistoryEntry[]>(IPC.invoke.configSyncListHistory),
+  configSyncRestore: (input: ConfigSyncRestoreInput) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncRestore, input),
+  configSyncChangePassword: (input: ConfigSyncChangePasswordInput) =>
+    invoke<ConfigSyncState>(IPC.invoke.configSyncChangePassword, input),
+  configSyncDisconnect: () => invoke<ConfigSyncState>(IPC.invoke.configSyncDisconnect),
   testNetworkProxy: (settings: unknown) =>
     invoke<{ ok: boolean; error?: string }>(IPC.invoke.networkProxyTest, settings),
   /** Installed system font families (Electron main, cached briefly). */
@@ -620,8 +704,15 @@ export const api = {
    *
    * `source` reports where the list came from: `remote` is the service's own
    * answer, `catalog` means the endpoint published nothing and models.dev was
+   * `source` reports where the list came from: `remote` is the service's own
+   * answer, `catalog` means the endpoint published nothing and models.dev was
    * used instead, `cache` is the local table, `fallback` is just the configured
    * model id.
+   *
+   * The resolution fields let the form show what the probe actually did:
+   * `effectiveBaseUrl` is the address that answered (which may be a completed
+   * candidate rather than the typed URL), `discoveryStyle` is how it was asked,
+   * and `evidence` is the reason the candidate was chosen.
    */
   listProviderModels: (input: {
     providerId?: string;
@@ -635,7 +726,26 @@ export const api = {
       models: ModelInfo[];
       source: "cache" | "remote" | "catalog" | "fallback";
       error?: string;
+      effectiveBaseUrl?: string;
+      discoveryStyle?: string;
+      apiStyleHint?: string;
+      evidence?: string;
     }>(IPC.invoke.providersListModels, input),
+  /**
+   * Look one hand-typed model id up in the local models.dev snapshot.
+   *
+   * The discovered list only describes ids a service already serves, so this is
+   * the only way a custom id reaches its published limits before the provider
+   * is saved. Snapshot read only: no provider network access and no host call.
+   * `info` is null when the catalog does not publish the id.
+   */
+  lookupProviderModel: (input: {
+    modelId: string;
+    baseUrl?: string;
+    providerId?: string;
+    vendorKey?: string;
+  }) =>
+    invoke<{ info: ModelInfo | null }>(IPC.invoke.providersLookupModel, input),
   /** Force-refresh models.dev for the running process; release snapshots are bundled. */
   refreshModelCatalog: () =>
     invoke<{
@@ -749,8 +859,6 @@ export const api = {
     ),
   setProject: (path: string) =>
     invoke<{ workspace: ProjectWorkspace | null }>(IPC.invoke.projectSet, path),
-  listPullRequests: () =>
-    invoke<{ pulls: PullRequestSummary[]; error?: string }>(IPC.invoke.pullsList),
   listScheduled: () =>
     invoke<{ tasks: ScheduledTask[] }>(IPC.invoke.scheduledList),
   createScheduled: (input: {
@@ -759,8 +867,20 @@ export const api = {
     cadence?: ScheduledTask["cadence"];
     enabled?: boolean;
     schedule?: ScheduledTask["schedule"];
+    workspacePath?: string;
+    permissionMode?: ScheduledTask["permissionMode"];
+    thinkingLevel?: ScheduledTask["thinkingLevel"] | null;
+    providerId?: string | null;
+    modelId?: string | null;
   }) => invoke<{ task: ScheduledTask }>(IPC.invoke.scheduledCreate, input),
-  updateScheduled: (input: Partial<ScheduledTask> & { id: string }) =>
+  updateScheduled: (
+    input: Omit<Partial<ScheduledTask>, "providerId" | "modelId" | "thinkingLevel"> & {
+      id: string;
+      thinkingLevel?: ScheduledTask["thinkingLevel"] | null;
+      providerId?: string | null;
+      modelId?: string | null;
+    },
+  ) =>
     invoke<{ task: ScheduledTask }>(IPC.invoke.scheduledUpdate, input),
   deleteScheduled: (id: string) => invoke(IPC.invoke.scheduledDelete, id),
   executeScheduled: (id: string) => invoke<{ sessionId: string }>(IPC.invoke.scheduledExecute, id),
@@ -806,8 +926,8 @@ export const api = {
     invoke<AgentCompactResponse>(IPC.invoke.agentCompact, req),
   abort: (sessionId: string) =>
     invoke(IPC.invoke.agentAbort, { sessionId }),
-  stop: (sessionId: string) =>
-    invoke<AgentStopResponse>(IPC.invoke.agentStop, { sessionId }),
+  stop: (sessionId: string, turnId?: string) =>
+    invoke<AgentStopResponse>(IPC.invoke.agentStop, { sessionId, ...(turnId ? { turnId } : {}) }),
   queuePrompt: (req: AgentQueuePushRequest) =>
     invoke<QueuedTurnSummary>(IPC.invoke.agentQueuePush, req),
   listQueuedPrompts: (sessionId: string) =>
@@ -848,6 +968,9 @@ export const api = {
     invoke<PlanResolutionResult>(IPC.invoke.plansResolve, resolution),
   listPlugins: () =>
     invoke<{ plugins: PluginSummary[] }>(IPC.invoke.pluginList),
+  /** One renderer slot component asking its own plugin for one JSON answer. */
+  pluginRendererCall: (pluginId: string, method: string, args?: unknown) =>
+    invoke(IPC.invoke.pluginRendererCall, pluginId, method, args),
   /**
    * Picking a folder only reports what it declares; the load happens in
    * `confirmLoadDevPlugin` once the user has seen that.
@@ -994,16 +1117,20 @@ export const api = {
   createUserSkill: (skill: UserSkillInput) =>
     invoke<{ skill: UserSkillRecord }>(IPC.invoke.skillCreate, skill),
   /**
-   * Opens a native picker for one file or (when `sourceKind === "dir"`) a
-   * folder; `canceled` when the user backed out. `mode: "link"` swaps copy
-   * for a symlink import.
+   * Opens a native picker for one file or multiple skill folders.
+   * Folder results report successful and failed imports independently.
    */
   importUserSkill: (
     query?: AgentCapabilityQuery & {
       sourceKind?: "file" | "dir";
       mode?: "copy" | "link";
     },
-  ) => invoke<{ canceled?: boolean; skill?: UserSkillRecord }>(IPC.invoke.skillImport, query),
+  ) => invoke<{
+    canceled?: boolean;
+    skill?: UserSkillRecord;
+    imported?: UserSkillRecord[];
+    failed?: Array<{ path: string; error: string }>;
+  }>(IPC.invoke.skillImport, query),
   /**
    * Scan third-party AI-tool skill directories. The scanner never throws;
    * a source that failed to read is reported with an `error` on its row.
@@ -1109,10 +1236,10 @@ export const api = {
   pluginViewOpen: (
     pluginId: string,
     viewId: string,
-    extra?: { sessionId?: string; location?: string },
+    extra?: { sessionId?: string; location?: string; tabId?: string },
   ) => invoke(IPC.invoke.pluginViewOpen, { pluginId, viewId, ...extra }),
-  pluginViewClose: (pluginId: string, viewId: string) =>
-    invoke(IPC.invoke.pluginViewClose, { pluginId, viewId }),
+  pluginViewClose: (pluginId: string, viewId: string, extra?: { sessionId: string; tabId?: string }) =>
+    invoke(IPC.invoke.pluginViewClose, { pluginId, viewId, ...extra }),
   pluginViewSetBounds: (bounds: {
     x: number;
     y: number;
@@ -1196,6 +1323,12 @@ export const api = {
   executeCommand: (commandId: string) =>
     invoke(IPC.invoke.commandPaletteExecute, commandId),
   openLogs: () => invoke(IPC.invoke.logOpenFolder),
+  /**
+   * Quit the application. Used by the surfaces that own the window before the
+   * shell has data; the main process runs the same ordered shutdown as the Quit
+   * menu item, so the answer may never arrive — callers must not depend on it.
+   */
+  quitApp: () => invoke<{ ok: boolean }>(IPC.invoke.appQuit),
   /** Toggles the devtools console; rejects unless developer mode is on. */
   toggleDevTools: (open?: boolean) =>
     invoke<{ open: boolean }>(IPC.invoke.devtoolsToggle, { open }),
@@ -1233,7 +1366,8 @@ export const api = {
       ...(mimeType ? { mimeType } : {}),
     }),
   fsReveal: (path: string) => invoke(IPC.invoke.fsReveal, { path }),
-  fsOpen: (path: string) => invoke(IPC.invoke.fsOpen, { path }),
+  fsOpen: (path: string, mimeType?: string) =>
+    invoke(IPC.invoke.fsOpen, { path, mimeType }),
   fsIndex: () => invoke<FsIndexResult>(IPC.invoke.fsIndex),
   /**
    * Complete a file reference from chat text to a real file (D320 follow-up).
@@ -1359,6 +1493,14 @@ export const api = {
       listener(normalizePlansChangedEvent(payload)),
     );
   },
+  getTodos: (sessionId: string) =>
+    invoke<SessionTodoSnapshot>(IPC.invoke.todosGet, { sessionId }),
+  onTodosChanged: (listener: (snapshot: SessionTodoSnapshot) => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.todosChanged, (payload) =>
+      listener(payload as SessionTodoSnapshot),
+    );
+  },
   onOauthLogin: (listener: (event: OAuthLoginEvent) => void) => {
     if (!window.piDesktop?.on) return () => undefined;
     return window.piDesktop.on(IPC.event.providersOauth, (payload) =>
@@ -1389,6 +1531,12 @@ export const api = {
       listener((payload as { message: string }).message),
     );
   },
+  onInsecureEndpointNotice: (listener: (payload: { host: string }) => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.insecureEndpointNotice, (payload) =>
+      listener(payload as { host: string }),
+    );
+  },
   onHostStatus: (listener: (status: HostStatusEvent) => void) => {
     if (!window.piDesktop?.on) return () => undefined;
     return window.piDesktop.on(IPC.event.hostStatus, (payload) =>
@@ -1402,6 +1550,10 @@ export const api = {
     return window.piDesktop.on(IPC.event.notificationChanged, (payload) =>
       listener((payload as { notification: AppNotification }).notification),
     );
+  },
+  onNotificationSound: (listener: () => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.notificationSound, () => listener());
   },
 
   // --- Remote hosts (R2b pairing UX) -----------------------------------------
@@ -1474,6 +1626,18 @@ export const api = {
     if (!window.piDesktop?.on) return () => undefined;
     return window.piDesktop.on(IPC.event.settingsChanged, (payload) =>
       listener((payload ?? {}) as Record<string, unknown>),
+    );
+  },
+  onConfigSyncChanged: (listener: (state: ConfigSyncState) => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.configSyncChanged, (payload) =>
+      listener(payload as ConfigSyncState),
+    );
+  },
+  onConfigSyncProgress: (listener: (progress: ConfigSyncProgress) => void) => {
+    if (!window.piDesktop?.on) return () => undefined;
+    return window.piDesktop.on(IPC.event.configSyncProgress, (payload) =>
+      listener(payload as ConfigSyncProgress),
     );
   },
   onPluginLauncherShown: (listener: () => void) => {

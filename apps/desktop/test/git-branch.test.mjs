@@ -7,7 +7,7 @@ import test from "node:test";
 
 register(new URL("./helpers/ts-import-hooks.mjs", import.meta.url));
 
-const { withGitBranch } = await import("../electron/main/git-branch.ts");
+const { withGitBranch } = await import("../electron/main/workspace-git.ts");
 
 test("reads branches from standard repositories and git worktrees", async () => {
   const root = await mkdtemp(join(tmpdir(), "pi-git-branch-"));

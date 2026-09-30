@@ -33,12 +33,6 @@ function forkPluginProcess({ entry }) {
     },
     onMessage: (handler) => child.on("message", handler),
     onExit: (handler) => child.on("exit", (code) => handler(code ?? 0)),
-    // Mirrors the real spawner: the plugin's own stdout/stderr is what a crash
-    // report has to be able to quote.
-    onLog: (handler) => {
-      child.stdout?.on("data", (chunk) => handler("info", String(chunk).trimEnd()));
-      child.stderr?.on("data", (chunk) => handler("error", String(chunk).trimEnd()));
-    },
     kill: () => child.kill(),
   };
 }
@@ -344,9 +338,6 @@ test("a crashed host process is restarted with backoff and the restart is counte
             id: "worker",
             start: async () => {
               // Die once, right after the broker was told the service is up.
-              // Die once, right after the broker was told the service is up.
-              // The line on stderr is the fixture's own "last words", which the
-              // crash report has to carry (issue #747).
               if (countStart() === 1) {
                 setTimeout(() => {
                   process.stderr.write("fixture older line\\nfixture service worker died");
@@ -365,14 +356,15 @@ test("a crashed host process is restarted with backoff and the restart is counte
   const failed = await waitFor(() =>
     runtime.getServiceStates().find((s) => s.state === "failed"),
   );
-  // The exit code is the diagnosis: without it a report says only "it died".
+  // The exit code is the safe diagnosis: plugin output is not copied into
+  // user-visible errors or crash audit records.
   assert.equal(failed.message, "plugin host process exited (exit code 7)");
 
   const crash = await waitFor(() =>
     audits.find((a) => a.api === "plugin.crash"),
   );
   assert.equal(crash.exitCode, 7);
-  assert.equal(crash.message, "error: fixture service worker died");
+  assert.equal("message" in crash, false);
 
   const scheduled = await waitFor(() =>
     audits.find((a) => a.api === "plugin.service.restart.scheduled"),
@@ -518,6 +510,7 @@ test("capability badges include every declared plugin capability", () => {
   assert.deepEqual(order, [
     "panel",
     "views",
+    "rendererUi",
     "commands",
     "tools",
     "agentExtension",

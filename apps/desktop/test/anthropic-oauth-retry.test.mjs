@@ -59,7 +59,10 @@ async function fixture(outcomes, run) {
     server.once("error", reject); server.listen(0, "127.0.0.1", resolve);
   });
   globalThis.fetch = (input, init) => {
-    assert.equal(String(input), TOKEN_URL, "OAuth fixture must never call an external endpoint");
+    const url = String(input);
+    if (url !== TOKEN_URL) {
+      return Promise.reject(new Error(`blocked ${url}`));
+    }
     return originalFetch(`http://127.0.0.1:${server.address().port}/token`, init);
   };
   const host = hostFixture();
@@ -103,8 +106,10 @@ test("real Anthropic authorization exchange retries 429 and stores one successfu
     assert.equal(requests[0].body.grant_type, "authorization_code");
     assert.deepEqual(requests[1].body, requests[0].body, "PKCE/code body changed during retry");
     assert.ok(requests[1].time - requests[0].time >= 950);
-    assert.equal(host.writes.length, 1);
-    assert.equal(JSON.parse(host.writes[0].value).refresh, success.refresh_token);
+    const accountWrites = host.writes.filter(write => write.secretRef === secretRefForProviderOauth(result.providerId));
+    assert.equal(accountWrites.length, 1);
+    assert.equal(JSON.parse(accountWrites[0].value).refresh, success.refresh_token);
+    assert.equal(host.writes.filter(write => write.secretRef === "secret:installation:oauth-device-id").length, 1);
   });
 });
 
@@ -133,7 +138,7 @@ test("429 exhaustion is three attempts with safe recovery text and no stored par
     assert.match(result.message, /rate limited.*start a new sign-in/i);
     safeError({ message: result.message });
     assert.equal(host.providers.size, 0);
-    assert.equal(host.secrets.size, 0);
+    assert.deepEqual([...host.secrets.keys()], ["secret:installation:oauth-device-id"]);
   });
 });
 

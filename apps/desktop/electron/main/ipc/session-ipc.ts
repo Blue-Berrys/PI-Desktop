@@ -9,7 +9,6 @@ import {
   draftMatchesExisting,
   providerCreateInputFromDraft,
   isModelConfigImportSource,
-  type ActivationScope,
   type ModelConfigImportDraft,
   type Mode,
   type SessionThinkingLevel,
@@ -37,11 +36,6 @@ type RuntimeSession = {
   modelId?: string;
   thinkingLevel?: SessionThinkingLevel;
   [key: string]: unknown;
-};
-
-type ImportableModelConfig = ModelConfigImportDraft & {
-  id?: string;
-  secretValue?: string;
 };
 
 let scannedImportSessions = new Map<string, ExternalSessionSummary>();
@@ -140,6 +134,15 @@ export function registerSessionIpc({
     if (!host) throw new Error("host unavailable");
     return host.call("search.context", input);
   });
+  handle(IPC.invoke.todosGet, async (input: { sessionId?: unknown } = {}) => {
+    if (!host) throw new Error("host unavailable");
+    if (typeof input.sessionId !== "string" || !input.sessionId.trim()) {
+      throw Object.assign(new Error("sessionId is required"), {
+        errorCode: ErrorCodes.INVALID_ARGUMENT,
+      });
+    }
+    return host.call("todos.get", { sessionId: input.sessionId });
+  });
   handle(IPC.invoke.sessionList, async () => {
     if (!host) throw new Error("host unavailable");
     const [result, native, { providers, defaults }] = await Promise.all([
@@ -210,7 +213,7 @@ export function registerSessionIpc({
           errorCode: ErrorCodes.INVALID_ARGUMENT,
         });
       }
-      if (activeTurns.has(sessionId)) {
+      if (activeTurns.has(sessionId) && !String(input.throughMessageId ?? "").trim()) {
         throw Object.assign(new Error("Cannot fork a running session"), {
           errorCode: ErrorCodes.AGENT_BUSY,
         });

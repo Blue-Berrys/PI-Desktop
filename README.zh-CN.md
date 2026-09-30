@@ -17,6 +17,8 @@
 [![Stars](https://img.shields.io/github/stars/vastsa/PI-Desktop?style=flat\&label=stars)](https://github.com/vastsa/PI-Desktop/stargazers)
 [![CI](https://github.com/vastsa/PI-Desktop/actions/workflows/ci.yml/badge.svg)](https://github.com/vastsa/PI-Desktop/actions/workflows/ci.yml)
 [![License](https://img.shields.io/github/license/vastsa/PI-Desktop)](LICENSE)
+[![Reddit](https://img.shields.io/badge/Reddit-r%2FAIUO-FF4500?logo=reddit\&logoColor=white)](https://www.reddit.com/r/AIUO/)
+[![QQ 群：点击加入 PI-Desktop 开发者交流群](https://img.shields.io/badge/QQ-%E5%8A%A0%E5%85%A5%E5%BC%80%E5%8F%91%E8%80%85%E4%BA%A4%E6%B5%81%E7%BE%A4-12B7F5?logo=tencentqq&logoColor=white)](https://qm.qq.com/q/iWP8i0XxIc)
 
 <br />
 
@@ -576,7 +578,7 @@ Agent / Plan / Goal
 | -------- | ------------- | --------------------------------------- |
 | macOS    | Apple Silicon | `.dmg` / `.zip`                         |
 | macOS    | Intel         | `.dmg` / `.zip`                         |
-| Windows  | x64           | Installer / Portable                    |
+| Windows  | x64           | 安装程序 / `.zip`                       |
 | Linux    | x64           | `.AppImage` / `.deb` / `.rpm` / `.asar` |
 
 macOS Release 使用 Developer ID 签名并经过 Apple Notarization。

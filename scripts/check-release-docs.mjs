@@ -79,22 +79,16 @@ for (const [relPath, pattern, label] of [
   }
 }
 
-// 2. Bundled models.dev snapshot.
-const modelsDevCatalogPath = "apps/desktop/resources/models.dev/api.json";
+// 2. Settings-only operation metadata. Runtime chat metadata is supplied by Pi.
+const operationMetadataPath = "apps/desktop/electron/main/settings-operation-metadata.json";
 try {
-  const catalog = JSON.parse(read(modelsDevCatalogPath));
-  if (
-    !catalog ||
-    Array.isArray(catalog) ||
-    typeof catalog !== "object" ||
-    !Object.values(catalog).some(
-      (provider) => provider && typeof provider === "object" && provider.models,
-    )
-  ) {
-    fail(modelsDevCatalogPath, "contains no provider model records");
-  }
+  const catalog = JSON.parse(read(operationMetadataPath));
+  if (!Array.isArray(catalog) || catalog.length === 0 || catalog.some(model =>
+    !model.vendor || !model.id || !model.modalities?.output?.length ||
+    (model.modalities.input?.includes("text") && model.modalities.output.every(value => value === "text")) || model.cost || model.api || model.baseUrl || model.auth
+  )) fail(operationMetadataPath, "expected display-only non-chat metadata");
 } catch (error) {
-  fail(modelsDevCatalogPath, `could not parse bundled catalog: ${error.message}`);
+  fail(operationMetadataPath, `could not parse settings metadata: ${error.message}`);
 }
 
 // 3. Shipped-locale in-app changelog. Compile the source catalog in a temporary
@@ -111,6 +105,7 @@ async function loadChangelogCatalog() {
     "packages/shared/src/changelog-es.ts",
     "packages/shared/src/changelog-fr.ts",
     "packages/shared/src/changelog-ko.ts",
+    "packages/shared/src/changelog-pt-BR.ts",
     "packages/shared/src/changelog-tr.ts",
   ];
   try {
@@ -144,7 +139,7 @@ try {
 if (catalogs) {
   const enEntries = catalogs.en;
   const expectedVersions = enEntries?.map((entry) => entry.version) ?? [];
-  const requiredLocales = ["en", "zh-CN", "zh-TW", "tr", "de", "es", "fr", "ko"];
+  const requiredLocales = ["en", "zh-CN", "zh-TW", "tr", "de", "es", "fr", "ko", "pt-BR"];
   for (const locale of requiredLocales) {
     if (!catalogs[locale]) {
       fail("packages/shared/src/changelog.ts", `missing shipped locale catalog: ${locale}`);

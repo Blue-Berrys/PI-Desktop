@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { installRendererApi } from "../../capture/renderer-api";
 import { StartupSplash } from "../../components/StartupSplash";
 import { api } from "../../lib/api";
+import { playNotificationChime } from "../../lib/notification-sound";
 import {
   clampSidebarWidth,
   loadSidebarWidth,
@@ -29,7 +30,9 @@ import {
 import { browserPluginTab } from "../../lib/work-panel-tabs";
 import { useAppStore } from "../../stores/app-store";
 import { useSidebarTransition } from "./useSidebarTransition";
+import { useStartupWatchdog } from "./useStartupWatchdog";
 import { useTraySessions } from "./useTraySessions";
+import { runLiveVoiceShortcut } from "../voice/live/live-voice-shortcuts";
 
 const MODIFIER_ONLY_KEYS = new Set([
   "Alt",
@@ -48,25 +51,21 @@ export function useAppShellRuntime() {
   const ready = useAppStore((s) => s.ready);
   const page = useAppStore((s) => s.page);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const acknowledgeSessionOutcome = useAppStore(
+    (s) => s.acknowledgeSessionOutcome,
+  );
   const showToast = useAppStore((s) => s.showToast);
   const handleAgentEvent = useAppStore((s) => s.handleAgentEvent);
   const handlePlansChanged = useAppStore((s) => s.handlePlansChanged);
   const abort = useAppStore((s) => s.abort);
   const settings = useAppStore((s) => s.settings);
-  const subagentPanel = useAppStore((s) => s.subagentPanel);
-  const closeSubagentPanel = useAppStore((s) => s.closeSubagentPanel);
   const workPanelOpen = useAppStore((s) => s.workPanelOpen);
   const workPanelWidth = useAppStore((s) => s.workPanelWidth);
-  const subagentPanelOpen = Boolean(
-    page === "chat" &&
-      subagentPanel &&
-      subagentPanel.sessionId === activeSessionId,
-  );
   const pluginThemes = useAppStore((s) => s.pluginThemes);
   const refreshPluginThemes = useAppStore((s) => s.refreshPluginThemes);
   const plugins = useAppStore((s) => s.plugins);
   const projectPath = useAppStore((s) => s.workspace?.path ?? null);
-  const workPanelVisible = workPanelOpen || subagentPanelOpen;
+  const workPanelVisible = workPanelOpen;
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -212,15 +211,6 @@ export function useAppShellRuntime() {
     presentedWorkPanelRef.current = presentedWorkPanelOpen;
   }, [presentedWorkPanelOpen]);
 
-  useEffect(() => {
-    if (
-      subagentPanel &&
-      (page !== "chat" || subagentPanel.sessionId !== activeSessionId)
-    ) {
-      closeSubagentPanel();
-    }
-  }, [activeSessionId, closeSubagentPanel, page, subagentPanel]);
-
   // Destination pages own the center pane. Leaving Chat while previewing must
   // restore that pane before the destination is presented; otherwise the
   // sidebar can change `page` successfully while the route stays unmounted.
@@ -245,11 +235,6 @@ export function useAppShellRuntime() {
     const store = useAppStore.getState();
     if (workPanelExitingRef.current) {
       store.openWorkPanel();
-      return;
-    }
-    // Close a visible subagent dock through the same path as Cmd/Ctrl+J.
-    if (store.subagentPanel) {
-      store.toggleWorkPanel();
       return;
     }
     // Prefer the visible presentation over a briefly stale session projection:
@@ -296,8 +281,10 @@ export function useAppShellRuntime() {
   }, []);
 
   useEffect(() => {
+    const pageHidesWorkPanel =
+      page === "settings" || page === "plugins" || page === "scheduled";
     const shouldPresent =
-      ready && page !== "settings" && (workPanelOpen || subagentPanelOpen);
+      ready && !pageHidesWorkPanel && workPanelOpen;
     const request = ++workPanelReservationRequest.current;
 
     if (shouldPresent) {
@@ -333,7 +320,7 @@ export function useAppShellRuntime() {
       isCurrent: () => request === workPanelReservationRequest.current,
       commit: () => setPresentedWorkPanelOpen(shouldPresent),
     });
-  }, [page, ready, subagentPanelOpen, workPanelOpen]);
+  }, [page, ready, workPanelOpen]);
 
   // Fallback if animationend is skipped (display:none mid-flight, etc.).
   useEffect(() => {
@@ -434,6 +421,19 @@ export function useAppShellRuntime() {
       .setNotificationViewingSession(viewingSessionId)
       .catch(() => undefined);
   }, [activeSessionId, page]);
+
+  useEffect(() => {
+    const acknowledgeFocusedSession = () => {
+      if (!ready || page !== "chat" || !activeSessionId) return;
+      // Restoring the existing chat from the taskbar is a read action even
+      // when the active session did not change. Keep the host row and shell
+      // badge in sync with what the user can now see.
+      void acknowledgeSessionOutcome(activeSessionId).catch(() => undefined);
+    };
+
+    window.addEventListener("focus", acknowledgeFocusedSession);
+    return () => window.removeEventListener("focus", acknowledgeFocusedSession);
+  }, [acknowledgeSessionOutcome, activeSessionId, page, ready]);
 
   useEffect(() => {
     if (!ready) return;
@@ -550,6 +550,16 @@ export function useAppShellRuntime() {
     });
   }, [bootstrap]);
 
+  // The menu/tray acknowledgement also follows `ready`, not only the first
+  // attempt's `finally`. A startup the watchdog retried is exactly one whose
+  // first attempt never settled, so that `finally` would never run and main
+  // would keep gating menu commands and tray activation on a shell that is
+  // already on screen. Repeating the call is harmless.
+  useEffect(() => {
+    if (!ready) return;
+    void api.menuRendererReady().catch(() => undefined);
+  }, [ready]);
+
   // The Host owns the prompt queue (D375); mirror it whenever the visible
   // session changes so a reload or a switch shows the durable entries.
   useEffect(() => {
@@ -563,10 +573,36 @@ export function useAppShellRuntime() {
       useAppStore.getState().applyQueueChanged(event),
     );
     const offPlansChanged = api.onPlansChanged(handlePlansChanged);
+    const offTodosChanged = api.onTodosChanged((snapshot) =>
+      useAppStore.getState().applyTodosChanged(snapshot),
+    );
     // Host-pushed toasts (plugin runtime etc.) are informational.
     const offToast = api.onToast((message) => showToast(message));
+    const offNotificationSound = api.onNotificationSound(playNotificationChime);
+    // The first plaintext hop to an endpoint the user typed. The shell owns the
+    // wording, and recording `insecureNoticeAcknowledged` keeps it to once; a
+    // failed write only means the notice shows again.
+    const offInsecureEndpoint = api.onInsecureEndpointNotice(() => {
+      showToast(
+        `${t("settings.networkInsecureNoticeTitle")} — ${t("settings.networkInsecureNoticeBody")}`,
+        { variant: "warning", duration: 12_000 },
+      );
+      const current = useAppStore.getState().settings;
+      if (!current) return;
+      void api
+        .setSettings({
+          ...current,
+          networkPolicy: {
+            ...(current.networkPolicy ?? {}),
+            mode: current.networkPolicy?.mode ?? "relaxed",
+            insecureNoticeAcknowledged: true,
+          },
+        })
+        .catch(() => undefined);
+    });
     // Agent-driven HTML preview: surface the browser tab when the agent
     // opens a workspace file in the embedded browser (BrowserPreview tool).
+    const offBrowserState = api.onBrowserState((event) => useAppStore.getState().updateBrowserWorkPanelTab(event));
     const offBrowserPreview = api.onBrowserPreview((event) => {
       useAppStore
         .getState()
@@ -594,7 +630,12 @@ export function useAppShellRuntime() {
       }
     });
     const offNotificationChanged = api.onNotificationChanged((notification) => {
-      useAppStore.getState().receiveNotification(notification);
+      const accepted = useAppStore.getState().receiveNotification(notification);
+      // A host replay, renderer reload, or post-clear delayed event may refer
+      // to a row that is already present/acknowledged. Do not surface a native
+      // banner for an event the store intentionally rejected.
+      if (!accepted) return;
+      playNotificationChime();
       const failed = notification.kind === "task.failed";
       const title = t(
         failed ? "notifications.failedTitle" : "notifications.completedTitle",
@@ -612,6 +653,7 @@ export function useAppShellRuntime() {
           kind: "task",
           title,
           body,
+          createdAt: notification.createdAt,
         })
         .catch(() => undefined);
     });
@@ -698,8 +740,15 @@ export function useAppShellRuntime() {
       }
       if (
         e.repeat &&
-        (shortcut.id === "navigateBack" || shortcut.id === "navigateForward")
+        (shortcut.id === "navigateBack" ||
+          shortcut.id === "navigateForward" ||
+          shortcut.id === "voiceToggle" ||
+          shortcut.id === "voiceCancel")
       ) {
+        return;
+      }
+      if (shortcut.id === "voiceToggle" || shortcut.id === "voiceCancel") {
+        if (runLiveVoiceShortcut(shortcut.id)) e.preventDefault();
         return;
       }
       e.preventDefault();
@@ -729,11 +778,13 @@ export function useAppShellRuntime() {
           case "toggleSidebar":
             toggleSidebar();
             break;
-          case "openWorkPanel":
-            if (useAppStore.getState().page !== "settings") {
+          case "openWorkPanel": {
+            const p = useAppStore.getState().page;
+            if (p !== "settings" && p !== "plugins" && p !== "scheduled") {
               useAppStore.getState().toggleWorkPanel();
             }
             break;
+          }
           case "abort":
             void abort();
             break;
@@ -758,8 +809,12 @@ export function useAppShellRuntime() {
       offEvent();
       offQueueChanged();
       offPlansChanged();
+      offTodosChanged();
       offToast();
+      offNotificationSound();
+      offInsecureEndpoint();
       offBrowserPreview();
+      offBrowserState();
       offHostStatus();
       offNotificationChanged();
       offSessionsChanged();
@@ -817,8 +872,18 @@ export function useAppShellRuntime() {
     };
   }, [ready]);
 
+  const {
+    phase: startupPhase,
+    waitedMs: startupWaitedMs,
+    retry: retryStartup,
+    retrying: startupRetrying,
+  } = useStartupWatchdog(ready);
   const showSplash = splashPhase !== "done";
-  const splash = showSplash ? (
+  // The splash and the recovery surface answer the same question ("nothing to
+  // show yet"), and on macOS the shell hides every child except the splash while
+  // it animates. Exactly one of them is mounted, so neither has to fight the
+  // other's layering.
+  const splash = showSplash && startupPhase === "starting" ? (
     <StartupSplash exiting={splashPhase === "exiting"} />
   ) : null;
 
@@ -867,9 +932,6 @@ export function useAppShellRuntime() {
     ready,
     page,
     activeSessionId,
-    subagentPanel,
-    subagentPanelOpen,
-    closeSubagentPanel,
     workPanelOpen,
     searchOpen,
     setSearchOpen,
@@ -902,6 +964,10 @@ export function useAppShellRuntime() {
     setArchMismatch,
     showSplash,
     splash,
+    startupPhase,
+    startupWaitedMs,
+    retryStartup,
+    startupRetrying,
     sidebarToggleShortcut,
     workPanelToggleTooltip,
   };

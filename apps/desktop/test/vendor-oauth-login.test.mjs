@@ -2,8 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  capabilitiesFromModelConfig,
+  clampThinkingLevel,
+  genericModelConfig,
+  modelConfigWithBinding,
+} from "@pi-desktop/agent-runtime";
+import {
+  buildProviderModel,
+  createProviderModels,
+} from "../../../packages/agent-runtime/dist/provider-binding.js";
+
+import {
   VendorOAuth,
   apiStyleForWireApi,
+  isXaiConversationModel,
   protocolForApiStyle,
   secretRefForProviderOauth,
 } from "../electron/main/oauth.ts";
@@ -66,8 +78,8 @@ function fakeHost() {
  * fall back to a pasted code — and persists through the injected store, so the
  * test exercises the credential path rather than mocking it away.
  */
-function fakeModels(credentials, { login, models: configuredModels } = {}) {
-  const provider = {
+function fakeModels(credentials, { login, models: configuredModels, provider: providerOverride } = {}) {
+  let provider = providerOverride ?? {
     id: "anthropic",
     name: "Anthropic",
     baseUrl: "https://api.anthropic.com",
@@ -112,13 +124,18 @@ function fakeModels(credentials, { login, models: configuredModels } = {}) {
       maxTokens: 8_192,
     },
   ];
+  provider = { ...provider, getModels: () => models };
   return {
+    setProvider: next => { provider = next; },
     getProviders: () => [provider],
     getProvider: (id) => (id === provider.id ? provider : undefined),
-    refresh: async () => ({ aborted: false, errors: new Map() }),
-    getAvailable: async () => models,
+    refresh: async (options = {}) => {
+      await provider.refreshModels?.({ allowNetwork: options.allowNetwork !== false, signal: options.signal ?? new AbortController().signal, force: options.force, publish: async ({ update }) => { update?.(); return true; } });
+      return { aborted: false, errors: new Map() };
+    },
+    getAvailable: async () => provider.getModels(),
     getModel: (providerId, modelId) => providerId === provider.id
-      ? models.find((model) => model.id === modelId)
+      ? provider.getModels().find((model) => model.id === modelId)
       : undefined,
     login:
       login ??
@@ -138,7 +155,7 @@ function fakeModels(credentials, { login, models: configuredModels } = {}) {
           access: `access-for-${code}`,
           expires: 4102444800000,
         };
-        await credentials.modify("anthropic", async () => credential);
+        await credentials.modify(provider.id, async () => credential);
         return credential;
       }),
     logout: async (id) => credentials.delete(id),
@@ -158,7 +175,7 @@ function harness(options = {}) {
   let counter = 0;
   const stores = [];
   const oauth = new VendorOAuth({
-    call: host.call,
+    call: (method, params) => options.call ? options.call(method, params, host.call) : host.call(method, params),
     emit: (event) => events.push(event),
     openExternal: async (url) => {
       opened.push(url);
@@ -169,7 +186,15 @@ function harness(options = {}) {
       return fakeModels(store, options);
     },
     modelConfigFor: options.modelConfigFor,
+    onAccountModels: options.onAccountModels,
+    onAccountRemoved: options.onAccountRemoved,
+    log: options.log,
     newId: () => `id-${++counter}`,
+    fetch:
+      options.fetch ??
+      (async () => {
+        throw new Error("live model list disabled in test");
+      }),
   });
   // The store the module handed pi-ai, so a test can drive it the way a token
   // refresh would.
@@ -320,7 +345,7 @@ test("cancelling takes the half-created row back out", async () => {
 
   await waitFor(events, "cancelled");
   assert.equal(host.providers.size, 0);
-  assert.equal(host.secrets.size, 0);
+  assert.deepEqual([...host.secrets.keys()], ["secret:installation:oauth-device-id"]);
   // The pending prompt is closed out so the dialog cannot hang on it.
   assert.ok(events.some((event) => event.kind === "promptCancelled"));
 });
@@ -508,7 +533,7 @@ test("Meta OAuth removes the provider row when API-key minting reports an expire
     const error = await waitFor(events, "error", 1200);
     assert.match(error.message, /Meta session expired/);
     assert.equal(host.providers.size, 0);
-    assert.equal(host.secrets.size, 0);
+    assert.deepEqual([...host.secrets.keys()], ["secret:installation:oauth-device-id"]);
   } finally {
     globalThis.fetch = previousFetch;
   }
@@ -531,6 +556,7 @@ test("the real pi-ai catalog offers every vendor account we ship", async () => {
       "github-copilot",
       "kimi-coding",
       "meta",
+      "openai",
       "openai-codex",
       "openrouter",
       "radius",
@@ -557,6 +583,47 @@ test("the ChatGPT OAuth catalog includes GPT-6 Astra", async () => {
   assert.ok(model, "openai-codex catalog must include gpt-6-astra");
   assert.equal(model.id, "gpt-6-astra");
   assert.equal(model.api, "openai-codex-responses");
+});
+
+test("the pi-ai 0.99.1 OAuth catalogs include the stable model wires", async () => {
+  const { OPENAI_CODEX_MODELS } = await import(
+    "@earendil-works/pi-ai/providers/openai-codex.models"
+  );
+  for (const modelId of ["gpt-5.6-sol", "gpt-5.6-luna"]) {
+    const model = OPENAI_CODEX_MODELS[modelId];
+    assert.ok(model, `openai-codex catalog must include ${modelId}`);
+    assert.equal(model.api, "openai-codex-responses");
+    assert.equal(model.reasoning, true);
+    assert.equal(model.contextWindow, 272_000);
+    assert.equal(model.maxTokens, 128_000);
+    assert.ok(model.input.includes("image"));
+  }
+
+  const { GITHUB_COPILOT_MODELS } = await import(
+    "@earendil-works/pi-ai/providers/github-copilot.models"
+  );
+  assert.equal(GITHUB_COPILOT_MODELS["claude-opus-5"]?.api, "anthropic-messages");
+  for (const modelId of ["gpt-5.6-sol", "gpt-5.6-luna", "grok-4.6"]) {
+    const model = GITHUB_COPILOT_MODELS[modelId];
+    assert.ok(model, `github-copilot catalog must include ${modelId}`);
+    assert.equal(model.api, "openai-responses");
+    assert.ok(model.input.includes("image"));
+  }
+
+  const { ANTHROPIC_MODELS } = await import(
+    "@earendil-works/pi-ai/providers/anthropic.models"
+  );
+  assert.equal(ANTHROPIC_MODELS["claude-opus-5"]?.api, "anthropic-messages");
+  assert.equal(ANTHROPIC_MODELS["claude-opus-5"]?.contextWindow, 1_000_000);
+
+  const { XAI_MODELS } = await import("@earendil-works/pi-ai/providers/xai.models");
+  assert.equal(XAI_MODELS["grok-4.6"]?.api, "openai-responses");
+  const thinkingLevels = Object.entries(XAI_MODELS["grok-4.6"]?.thinkingLevelMap ?? {})
+    .filter(([, value]) => typeof value === "string")
+    .map(([level]) => level);
+  for (const level of ["low", "medium", "high", "xhigh"]) {
+    assert.ok(thinkingLevels.includes(level), `xAI catalog must include ${level} thinking`);
+  }
 });
 
 test("credential writes for one account run one at a time", async () => {
@@ -588,5 +655,480 @@ test("credential writes for one account run one at a time", async () => {
   // pi-ai's locked refresh depends on to avoid double-refreshing a token.
   assert.equal(overlapped, false);
   assert.deepEqual(seen, ["access-for-abc", "rotated-1"]);
-  assert.equal(host.secrets.size, 1);
+  assert.deepEqual([...host.secrets.keys()].sort(), ["secret:installation:oauth-device-id", secretRefForProviderOauth("row-1")].sort());
+});
+
+test("conversation-model filter drops xAI image and video ids", () => {
+  assert.equal(isXaiConversationModel("grok-4.7"), true);
+  assert.equal(isXaiConversationModel("grok-4.7-build-fast"), true);
+  assert.equal(isXaiConversationModel("grok-imagine-image"), false);
+  assert.equal(isXaiConversationModel("grok-imagine-video-1.5"), false);
+  assert.equal(isXaiConversationModel("  "), false);
+});
+
+test("an xAI account offers the chat models its /models endpoint returns", async () => {
+  const seen = [];
+  const fetchModels = async (url, init) => {
+    seen.push({
+      url: String(url),
+      authorization: init?.headers?.Authorization,
+    });
+    return new Response(JSON.stringify({
+      data: [
+        { id: "grok-4.6" },
+        { id: "grok-4.7" },
+        { id: "grok-imagine-image" },
+      ],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = fetchModels;
+  const xaiModel = {
+    id: "grok-4.6",
+    name: "Grok 4.6",
+    api: "openai-responses",
+    provider: "xai",
+    baseUrl: "https://api.x.ai/v1",
+    input: ["text", "image"],
+    reasoning: true,
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      low: "low",
+      medium: "medium",
+      high: "high",
+      xhigh: "xhigh",
+      max: null,
+    },
+    cost: { input: 2, output: 6, cacheRead: 0.5, cacheWrite: 0 },
+    contextWindow: 500_000,
+    maxTokens: 500_000,
+  };
+  try {
+    const { host, events, oauth } = harness({
+      fetch: fetchModels,
+      provider: {
+        id: "xai",
+        name: "xAI",
+        baseUrl: "https://api.x.ai/v1",
+        auth: {
+          oauth: {
+            name: "xAI (Grok/X subscription)",
+            isSubscription: true,
+            loginLabel: "Sign in with SuperGrok or X Premium",
+          },
+        },
+      },
+      models: [
+        xaiModel,
+        { ...xaiModel, id: "grok-2", name: "Grok 2" },
+      ],
+    });
+    const { loginId } = await oauth.start("xai");
+    const prompt = await waitFor(events, "prompt");
+    oauth.respond({ loginId, promptId: prompt.request.promptId, value: "abc" });
+    const done = await waitFor(events, "done");
+    const row = host.providers.get(done.providerId);
+    assert.deepEqual(row.models.map((model) => model.id), ["grok-4.6", "grok-4.7"]);
+    const offered = row.models.find((model) => model.id === "grok-4.7");
+    assert.equal(offered.contextWindow, 500_000);
+    assert.deepEqual(offered.thinkingLevels, ["low", "medium", "high", "xhigh"]);
+    assert.equal(await oauth.bindingFor(done.providerId, "grok-2"), undefined);
+    const binding = await oauth.bindingFor(done.providerId, "grok-4.7");
+    assert.equal(binding.apiStyle, "responses");
+    assert.equal(binding.baseUrl, "https://api.x.ai/v1");
+    assert.equal(seen[0].url, "https://api.x.ai/v1/models");
+    assert.equal(seen[0].authorization, "Bearer access-for-abc");
+  } finally {
+    globalThis.fetch = previousFetch;
+  }
+});
+
+test("a new Grok inherits grok-4.6 even when an older Grok is first in the pin", async () => {
+  const fetchModels = async () => new Response(JSON.stringify({
+    data: [{ id: "grok-4.7" }],
+  }), { status: 200, headers: { "content-type": "application/json" } });
+  const older = {
+    id: "grok-4.3",
+    name: "Grok 4.3",
+    api: "openai-responses",
+    provider: "xai",
+    baseUrl: "https://api.x.ai/v1",
+    input: ["text"],
+    reasoning: true,
+    thinkingLevelMap: { off: "off", low: "low", medium: "medium", high: "high" },
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 1_000_000,
+    maxTokens: 30_000,
+  };
+  const newest = {
+    ...older,
+    id: "grok-4.6",
+    name: "Grok 4.6",
+    input: ["text", "image"],
+    thinkingLevelMap: { off: null, low: "low", medium: "medium", high: "high", xhigh: "xhigh" },
+    contextWindow: 500_000,
+    maxTokens: 500_000,
+  };
+  const { events, oauth } = harness({
+    fetch: fetchModels,
+    provider: {
+      id: "xai",
+      name: "xAI",
+      baseUrl: "https://api.x.ai/v1",
+      auth: { oauth: { name: "xAI", isSubscription: true, loginLabel: "Sign in" } },
+    },
+    models: [older, newest],
+  });
+  const { loginId } = await oauth.start("xai");
+  const prompt = await waitFor(events, "prompt");
+  oauth.respond({ loginId, promptId: prompt.request.promptId, value: "abc" });
+  const done = await waitFor(events, "done");
+  const binding = await oauth.bindingFor(done.providerId, "grok-4.7");
+  assert.equal(binding.modelConfig.contextWindow, 500_000);
+  assert.equal(binding.modelConfig.maxTokens, 500_000);
+  assert.deepEqual(binding.supportedThinkingLevels, ["minimal", "low", "medium", "high", "xhigh"]);
+});
+
+async function liveCopilotBinding(sibling, options = {}) {
+  const modelId = options.modelId ?? "claude-sonnet-99";
+  const { events, oauth } = harness({
+    provider: {
+      id: "github-copilot",
+      name: "GitHub Copilot",
+      baseUrl: "https://api.individual.githubcopilot.com",
+      auth: { oauth: { name: "GitHub Copilot", loginLabel: "Sign in" } },
+    },
+    models: [sibling],
+    modelConfigFor: options.modelConfigFor,
+    onAccountModels: options.onAccountModels,
+    onAccountRemoved: options.onAccountRemoved,
+    fetch: async () => new Response(JSON.stringify({
+      data: [{ id: modelId, model_picker_enabled: true, policy: { state: "enabled" } }],
+    }), { status: 200, headers: { "content-type": "application/json" } }),
+  });
+  const { loginId } = await oauth.start("github-copilot");
+  const prompt = await waitFor(events, "prompt");
+  oauth.respond({ loginId, promptId: prompt.request.promptId, value: "test-code" });
+  const done = await waitFor(events, "done");
+  const binding = await oauth.bindingFor(done.providerId, modelId);
+  assert.ok(binding, "the account's newly offered model must be runnable");
+  return binding;
+}
+
+const adaptiveSonnet = {
+  id: "claude-sonnet-5",
+  name: "Claude Sonnet 5",
+  api: "anthropic-messages",
+  provider: "github-copilot",
+  baseUrl: "https://api.individual.githubcopilot.com",
+  reasoning: true,
+  input: ["text", "image"],
+  contextWindow: 1_000_000,
+  maxTokens: 128_000,
+  cost: { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
+  compat: { forceAdaptiveThinking: true },
+  thinkingLevelMap: {
+    off: null,
+    minimal: null,
+    low: "low",
+    medium: "medium",
+    high: "high",
+    xhigh: "xhigh",
+    max: "max",
+  },
+};
+
+test("a live-only Claude model retains its sibling's thinking protocol and effort mapping", async () => {
+  const binding = await liveCopilotBinding(adaptiveSonnet);
+  assert.equal(binding.apiStyle, "anthropic_messages");
+  assert.equal(binding.modelConfig.name, "claude-sonnet-99");
+  assert.equal(binding.modelConfig.compat?.forceAdaptiveThinking, true);
+  assert.deepEqual(binding.modelConfig.thinkingLevelMap, adaptiveSonnet.thinkingLevelMap);
+  assert.equal(binding.modelConfig.contextWindow, 1_000_000);
+  assert.equal(binding.modelConfig.maxTokens, 128_000);
+});
+
+test("live-only reasoning models preserve default levels in sparse effort maps", async () => {
+  const binding = await liveCopilotBinding({
+    ...adaptiveSonnet,
+    thinkingLevelMap: { xhigh: "xhigh", max: "max" },
+  });
+  assert.deepEqual(binding.supportedThinkingLevels, [
+    "off", "minimal", "low", "medium", "high", "xhigh", "max",
+  ]);
+  assert.equal(clampThinkingLevel(binding, "high"), "high");
+});
+
+test("live-only models respect null-disabled levels and non-reasoning siblings", async () => {
+  const restricted = await liveCopilotBinding({
+    ...adaptiveSonnet,
+    thinkingLevelMap: { off: null, minimal: null, low: null, medium: null, high: null, xhigh: "xhigh", max: null },
+  });
+  assert.deepEqual(restricted.supportedThinkingLevels, ["xhigh"]);
+  const nonReasoning = await liveCopilotBinding({ ...adaptiveSonnet, reasoning: false });
+  assert.equal(nonReasoning.supportsReasoning, false);
+  assert.deepEqual(nonReasoning.supportedThinkingLevels, ["off"]);
+});
+
+test("a live-only model without a same-tier sibling keeps generic capabilities", async () => {
+  const binding = await liveCopilotBinding(adaptiveSonnet, { modelId: "claude-haiku-99" });
+  assert.equal(binding.supportsReasoning, false);
+  assert.deepEqual(binding.supportedThinkingLevels, ["off"]);
+  assert.equal(binding.modelConfig.compat, undefined);
+  assert.equal(binding.modelConfig.thinkingLevelMap, undefined);
+});
+
+test("published model metadata takes precedence over the pinned sibling", async () => {
+  const published = {
+    ...genericModelConfig("claude-sonnet-99"),
+    source: "models.dev",
+    reasoning: true,
+    supportedThinkingLevels: ["low", "high"],
+    thinkingLevelMap: { low: "low", high: "high" },
+    thinkingProtocol: "legacy",
+  };
+  const binding = await liveCopilotBinding(adaptiveSonnet, { modelConfigFor: async () => published });
+  assert.deepEqual(binding.modelConfig, published);
+  assert.deepEqual(binding.supportedThinkingLevels, ["low", "high"]);
+});
+
+test("an explicit effort map on generic metadata governs the fallback's supported levels", async () => {
+  const config = {
+    ...genericModelConfig("claude-sonnet-99"),
+    thinkingLevelMap: { off: null, minimal: null, low: null, medium: null, high: "high", xhigh: null, max: null },
+    compat: { forceAdaptiveThinking: false },
+  };
+  const binding = await liveCopilotBinding(adaptiveSonnet, { modelConfigFor: async () => config });
+  assert.equal(binding.modelConfig.compat.forceAdaptiveThinking, false);
+  assert.deepEqual(binding.modelConfig.thinkingLevelMap, config.thinkingLevelMap);
+  assert.deepEqual(binding.supportedThinkingLevels, ["high"]);
+});
+
+test("live-only Claude bindings send adaptive thinking with the requested wire effort", async () => {
+  const binding = await liveCopilotBinding({
+    ...adaptiveSonnet,
+    thinkingLevelMap: { off: null, minimal: null, xhigh: "xhigh", max: "max" },
+  });
+  const modelConfig = modelConfigWithBinding(binding.modelConfig);
+  const provider = {
+    ...binding,
+    modelConfig,
+    ...capabilitiesFromModelConfig(modelConfig),
+    id: "test-account-row",
+    name: "GitHub Copilot",
+    vendorKey: "github-copilot",
+    modelId: "claude-sonnet-99",
+    authKind: "oauth",
+    apiKey: "",
+    resolveAuth: async () => ({ apiKey: "test-copilot-access-token" }),
+  };
+  const model = buildProviderModel(provider);
+  const models = createProviderModels(provider, model);
+  for (const level of ["high", "xhigh", "max"]) {
+    let request;
+    const result = await models.streamSimple(model, {
+      messages: [{ role: "user", content: "fixture", timestamp: 1 }],
+    }, {
+      reasoning: clampThinkingLevel(provider, level),
+      maxRetries: 0,
+      fetch: async (input, init) => {
+        request = new Request(input, init);
+        return Response.json({ type: "error", error: { type: "invalid_request_error", message: "fixture response" } }, { status: 400 });
+      },
+    }).result();
+    assert.equal(result.stopReason, "error");
+    assert.ok(request, "the real adapter must reach the HTTP boundary");
+    const body = await request.json();
+    assert.equal(body.model, "claude-sonnet-99");
+    assert.equal(body.thinking.type, "adaptive");
+    assert.equal(body.output_config.effort, level);
+    assert.equal("budget_tokens" in body.thinking, false);
+    assert.equal(request.headers.get("Authorization"), "Bearer test-copilot-access-token");
+    assert.equal(request.headers.get("x-api-key"), null);
+  }
+});
+
+test("legacy thinking siblings are not implicitly promoted to adaptive", async () => {
+  const binding = await liveCopilotBinding({
+    ...adaptiveSonnet,
+    id: "claude-sonnet-4.5",
+    compat: undefined,
+    thinkingLevelMap: undefined,
+  });
+  assert.notEqual(binding.modelConfig.compat?.forceAdaptiveThinking, true);
+  assert.equal(binding.modelConfig.thinkingLevelMap, undefined);
+  assert.deepEqual(binding.supportedThinkingLevels, ["off", "minimal", "low", "medium", "high"]);
+});
+
+test("live-only thinking restrictions survive runtime launch without a saved model binding", async () => {
+  const disabled = { off: null, minimal: null, low: null, medium: null, high: null, xhigh: null, max: null };
+  for (const [sibling, expected] of [
+    [{ ...adaptiveSonnet, thinkingLevelMap: { ...disabled, high: "high" } }, { supportsReasoning: true, supportedThinkingLevels: ["high"] }],
+    [{ ...adaptiveSonnet, reasoning: false, thinkingLevelMap: undefined }, { supportsReasoning: false, supportedThinkingLevels: ["off"] }],
+    [{ ...adaptiveSonnet, thinkingLevelMap: disabled }, { supportsReasoning: false, supportedThinkingLevels: ["off"] }],
+  ]) {
+    const binding = await liveCopilotBinding(sibling);
+    const effective = modelConfigWithBinding(binding.modelConfig);
+    assert.deepEqual(capabilitiesFromModelConfig(effective), expected);
+    assert.deepEqual(effective.thinkingLevelMap, sibling.thinkingLevelMap);
+  }
+});
+
+function codexProvider() {
+  return {
+    id: "openai-codex",
+    name: "ChatGPT",
+    baseUrl: "https://chatgpt.com/backend-api",
+    auth: { oauth: { name: "ChatGPT Plus/Pro", isSubscription: true, loginLabel: "Sign in" } },
+  };
+}
+
+function codexModel(id) {
+  return {
+    id,
+    name: id,
+    api: "openai-codex-responses",
+    provider: "openai-codex",
+    baseUrl: "https://chatgpt.com/backend-api",
+    input: ["text"],
+    reasoning: true,
+    thinkingLevelMap: { off: null, low: "low", medium: "medium", high: "high" },
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    contextWindow: 272_000,
+    maxTokens: 128_000,
+  };
+}
+
+/** A pasted code that makes `access-for-<code>` a ChatGPT-shaped JWT. */
+function codexLoginCode() {
+  const payload = Buffer.from(JSON.stringify({
+    "https://api.openai.com/auth": { chatgpt_account_id: "acct_123" },
+  })).toString("base64url");
+  return `h.${payload}.sig`;
+}
+
+test("a ChatGPT account lists the models /codex/models returns for its client version", async () => {
+  const seen = [];
+  // The live endpoint rejects a request without client_version.
+  const fetchModels = async (input) => {
+    const url = new URL(String(input));
+    seen.push(url);
+    if (!url.searchParams.get("client_version")) {
+      return new Response(JSON.stringify({
+        detail: [{ loc: ["query", "client_version"], msg: "Field required" }],
+      }), { status: 400 });
+    }
+    return new Response(JSON.stringify({
+      models: [{ slug: "gpt-6-luna", visibility: "list" }, { slug: "gpt-6.1-sol", visibility: "list" }],
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  const { host, events, oauth } = harness({
+    fetch: fetchModels,
+    provider: codexProvider(),
+    models: [codexModel("gpt-6-luna")],
+  });
+  const { loginId } = await oauth.start("openai-codex");
+  const prompt = await waitFor(events, "prompt");
+  oauth.respond({ loginId, promptId: prompt.request.promptId, value: codexLoginCode() });
+  const done = await waitFor(events, "done");
+  const row = host.providers.get(done.providerId);
+  assert.deepEqual(row.models.map((model) => model.id), ["gpt-6-luna", "gpt-6.1-sol"]);
+  assert.equal(seen[0].pathname, "/backend-api/codex/models");
+  const binding = await oauth.bindingFor(done.providerId, "gpt-6.1-sol");
+  assert.equal(binding.baseUrl, "https://chatgpt.com/backend-api");
+});
+
+test("a failed ChatGPT model list logs the status and a token-free response excerpt", async () => {
+  const logs = [];
+  const code = codexLoginCode();
+  const fetchModels = async () => new Response(JSON.stringify({
+    detail: [{ loc: ["query", "client_version"], msg: "Field required" }],
+    echoed: `access-for-${code}`,
+  }), { status: 400 });
+  const { host, events, oauth } = harness({
+    fetch: fetchModels,
+    log: (level, message, data) => logs.push({ level, message, data }),
+    provider: codexProvider(),
+    models: [codexModel("gpt-6-luna")],
+  });
+  const { loginId } = await oauth.start("openai-codex");
+  const prompt = await waitFor(events, "prompt");
+  oauth.respond({ loginId, promptId: prompt.request.promptId, value: code });
+  const done = await waitFor(events, "done");
+  // pi-ai's pinned list is still the fallback.
+  assert.deepEqual(host.providers.get(done.providerId).models.map((model) => model.id), ["gpt-6-luna"]);
+  const failed = logs.find((entry) => entry.message === "vendor account model list failed");
+  assert.ok(failed, `no model list failure log; saw ${logs.map((entry) => entry.message).join(", ")}`);
+  assert.equal(failed.level, "warn");
+  assert.equal(failed.data.vendorId, "openai-codex");
+  assert.equal(failed.data.status, 400);
+  assert.match(failed.data.responseExcerpt, /client_version/);
+  const logged = JSON.stringify(logs);
+  assert.equal(logged.includes(code), false);
+  assert.equal(logged.includes(code.split(".")[1]), false);
+});
+
+test("failed Host deletion keeps the account catalog and credentials usable", async () => {
+  const host = fakeHost();
+  const row = { id: "saved", vendorKey: "anthropic", authKind: "oauth" };
+  host.providers.set(row.id, row);
+  host.secrets.set(secretRefForProviderOauth(row.id), JSON.stringify({
+    type: "oauth", access: "fixture-access", refresh: "fixture-refresh", expires: 4102444800000,
+  }));
+  const removed = [];
+  const oauth = new VendorOAuth({
+    call: async (method, params) => {
+      if (method === "providers.delete") throw new Error("fixture Host deletion failed");
+      return host.call(method, params);
+    },
+    emit: () => {}, openExternal: async () => {},
+    createModels: store => fakeModels(store),
+    onAccountRemoved: id => removed.push(id),
+  });
+  assert.deepEqual(await oauth.resolveAuth(row.id), { apiKey: "fixture-access" });
+  await assert.rejects(oauth.deleteAccount(row.id), /Host deletion failed/);
+  assert.deepEqual(removed, []);
+  assert.deepEqual(await oauth.resolveAuth(row.id), { apiKey: "fixture-access" });
+});
+
+test("an unsigned OAuth account cannot borrow an ambient API key", async (t) => {
+  const previous = process.env.ANTHROPIC_API_KEY;
+  process.env.ANTHROPIC_API_KEY = "fixture-ambient-not-this-account";
+  t.after(() => { if (previous === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = previous; });
+  const host = fakeHost();
+  host.providers.set("unsigned", { id: "unsigned", vendorKey: "anthropic", authKind: "oauth", enabled: true });
+  const oauth = new VendorOAuth({ call: host.call, emit: () => undefined, openExternal: async () => undefined,
+    fetch: async () => { throw new Error("No network expected"); } });
+  await assert.rejects(oauth.resolveAuth("unsigned"), /not signed in/);
+});
+
+test("forced account refresh bypasses the live model TTL", async () => {
+  let models = ["gpt-6-luna"];
+  let attached;
+  const h = harness({ onAccountModels: (_id, collection) => { attached = collection; }, provider: codexProvider(), models: [codexModel("gpt-6-luna"), codexModel("gpt-6.1-sol")],
+    fetch: async () => Response.json({ models: models.map(slug => ({ slug, visibility: "list" })) }) });
+  const { loginId } = await h.oauth.start("openai-codex");
+  const prompt = await waitFor(h.events, "prompt");
+  h.oauth.respond({ loginId, promptId: prompt.request.promptId, value: codexLoginCode() });
+  const done = await waitFor(h.events, "done");
+  models = ["gpt-6.1-sol"];
+  await attached.refresh({ allowNetwork: true, force: true });
+  assert.deepEqual((await h.oauth.listModels(done.providerId)).map(model => model.modelId), ["gpt-6.1-sol"]);
+});
+
+test("failed cleanup after a rejected login preserves the surviving account instance", async () => {
+  const attached = []; const removed = [];
+  const h = harness({ login: async () => { throw new Error("fixture login rejected"); },
+    call: (method, params, call) => { if (method === "providers.delete") throw new Error("fixture delete rejected"); return call(method, params); },
+    onAccountModels: (id, models) => attached.push({ id, models }),
+    onAccountRemoved: id => removed.push(id),
+  });
+  await h.oauth.start("anthropic");
+  await waitFor(h.events, "error");
+  assert.equal(h.host.providers.size, 1);
+  assert.deepEqual(removed, []);
+  const rowId = [...h.host.providers.keys()][0];
+  await h.oauth.listModels(rowId);
+  assert.equal(attached.filter(account => account.id === rowId).length, 1);
 });

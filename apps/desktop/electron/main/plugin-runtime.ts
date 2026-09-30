@@ -12,14 +12,16 @@ import type { Stats } from "node:fs";
 import { open as openFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import type { LoadedSkillDocument } from "./skill-document";
+import { getModuleDirectory } from "./module-path";
 import {
   busTopicAllowed,
   isDeniedFsPath,
   isFsPathInScope,
   isValidBusTopic,
   isValidBusTopicPattern,
-  isNetUrlAllowed,
-  isNetSocketUrlAllowed,
+  isNetSocketUrlAllowedWithGrant,
+  isNetUrlAllowedWithGrant,
   matchesBusTopic,
   matchFsGlob,
   normalizeFsPath,
@@ -57,6 +59,7 @@ import {
   type PluginNativeNotificationInput,
   type PluginNativeNotificationResult,
   type PluginNotificationPermission,
+  type PluginNetEgressGrant,
   type PluginServiceContrib,
   type PluginSettingContrib,
   type PluginSkillContrib,
@@ -66,6 +69,7 @@ import {
   isAllowedKeybinding,
   isReservedKeybinding,
   normalizeKeybinding,
+  type PluginRendererDescriptor,
   type PluginServiceStatus,
   type PluginSettingDefinition,
   type PluginWorkspaceInfo,
@@ -78,9 +82,21 @@ import {
   resolveWithinRoot,
 } from "@pi-desktop/host-runtime";
 import { pluginChildEnv } from "./child-process-env";
+import {
+  readThemeAssetBytes,
+  resolveAbsoluteThemeAssetPath,
+  resolvePackageThemeAssetPath,
+  themeAssetGroupWithinBudget,
+} from "./plugin-theme-assets.js";
 import { desktopDataDir } from "./data-paths";
 import { McpServerClient, type McpServerClientOptions } from "./plugin-mcp";
 import { PluginToolInvocations, type PluginToolInvocation } from "./plugin-tool-invocations";
+import { McpCallRegistry } from "./mcp-call-registry";
+import {
+  RendererCallRelay,
+  rendererDescriptorFor,
+  resolveRendererSourcePath,
+} from "./plugin-renderer-extension";
 import { DevPluginWatcher, type DevPluginWatcherDeps } from "./plugin-watcher";
 import { parseAllowedExternalUrl } from "./safe-open-external";
 import type { PluginAppearance } from "../shared/plugin-panel-chrome";
@@ -210,6 +226,8 @@ export type PluginPanelRequest = {
   resizable?: boolean;
   /** The plugin's egress allowlist; the panel session is confined to it. */
   netDomains?: readonly string[];
+  /** The install-time `net.anyHost` grant lifts the panel's allowlist too. */
+  netAnyHost?: boolean;
   /** Allows the isolated panel to request microphone audio, never camera access. */
   allowMicrophone?: boolean;
   /** Development panels show the host drag-band reminder in their chrome. */
@@ -391,8 +409,6 @@ export type PluginHostServices = {
     exitCode: number;
     /** Hex form for Windows hard-fault codes, when applicable. */
     exitCodeHex?: string;
-    /** The plugin's own last output line, when it printed one before dying. */
-    lastOutput?: string;
   }) => void;
   /** Fired when a resident service changes supervision state. */
   onServiceChange?: (status: PluginServiceStatus) => void;
@@ -402,18 +418,19 @@ export type PluginHostServices = {
     name: string;
     ok: boolean;
     message?: string;
-  }) => void;
+  }) => Promise<void> | void;
   /** Work-panel guest + CDP, gated by `browser.cdp` in the runtime. */
   browser?: {
     navigate: (
       input: { url?: string; path?: string },
       sessionId?: string,
+      tabId?: string,
     ) => Promise<unknown>;
-    action: (action: "back" | "forward" | "reload" | "stop") => void;
+    action: (action: "back" | "forward" | "reload" | "stop", sessionId?: string, tabId?: string) => void;
     setBounds: (pluginId: string, hole: unknown) => unknown;
     setVisible: (pluginId: string, visible: boolean) => void;
     getState: () => unknown;
-    openExternal: () => void;
+    openExternal: (sessionId?: string, tabId?: string) => void;
     snapshot: () => Promise<unknown>;
     screenshot: (
       input?: { fullPage?: boolean },
@@ -633,14 +650,6 @@ const SERVICE_RESTART_MAX_DELAY_MS = 30_000;
 const MAX_SERVICE_RESTARTS = 5;
 /** A host process that stays up this long is healthy; the backoff resets. */
 const SERVICE_HEALTHY_MS = 60_000;
-/** Trailing plugin-output lines kept for a crash report, newest last. */
-const PLUGIN_LOG_TAIL_LINES = 3;
-/** Per-line cap, so a plugin that printed a megabyte cannot fill the record. */
-const PLUGIN_LOG_TAIL_LINE_CHARS = 400;
-
-/** One line a plugin host process wrote to its own stdout/stderr. */
-type PluginLogLine = { level: string; message: string };
-
 /** Convert Electron's signed Windows status into the process's unsigned code. */
 function childExitUnsigned(code: number): number {
   if (!Number.isFinite(code)) return code;
@@ -669,59 +678,6 @@ function childExitLabel(code: number): string {
   return `exit code ${unsigned}${hex ? ` (${hex})` : ""}`;
 }
 
-function rememberPluginLogLine(
-  tail: PluginLogLine[],
-  level: string,
-  message: string,
-): void {
-  if (!message.trim()) return;
-  tail.push({ level, message: message.slice(0, PLUGIN_LOG_TAIL_LINE_CHARS) });
-  if (tail.length > PLUGIN_LOG_TAIL_LINES) tail.shift();
-}
-
-/** Append arbitrary stream chunks while retaining complete logical lines. */
-function appendPluginLogChunk(
-  tail: PluginLogLine[],
-  fragments: Map<string, string>,
-  level: string,
-  chunk: string,
-): void {
-  const normalized = `${fragments.get(level) ?? ""}${chunk}`.replace(/\r\n?/g, "\n");
-  const lines = normalized.split("\n");
-  fragments.set(level, lines.pop() ?? "");
-  for (const line of lines) rememberPluginLogLine(tail, level, line);
-}
-
-/** Include a final unterminated line before a crash report snapshots the tail. */
-function flushPluginLogTail(
-  tail: PluginLogLine[],
-  fragments: Map<string, string>,
-): void {
-  for (const [level, fragment] of fragments) {
-    rememberPluginLogLine(tail, level, fragment);
-  }
-  fragments.clear();
-}
-
-/** The newest plugin-output line, flattened for a one-line report. */
-function lastLogLine(
-  tail: readonly PluginLogLine[] | undefined,
-): string | undefined {
-  const newest = tail?.[tail.length - 1];
-  if (!newest?.message) return undefined;
-  const text = newest.message.replace(/\s+/g, " ").trim();
-  return text ? `${newest.level}: ${text}` : undefined;
-}
-
-/** The exit code plus the plugin's last words, when it left any. */
-function childExitDetail(
-  code: number,
-  tail: readonly PluginLogLine[] | undefined,
-): string {
-  const label = childExitLabel(code);
-  const lastOutput = lastLogLine(tail);
-  return lastOutput ? `${label}; last output: ${lastOutput}` : label;
-}
 /** Bus payloads are messages, not file transfers. */
 const MAX_BUS_PAYLOAD_BYTES = 64 * 1024;
 /** A plugin may hold at most this many live subscriptions. */
@@ -780,10 +736,6 @@ type LoadedPlugin = {
   pending: Map<string, PendingCall>;
   nextCallId: number;
   disposing: boolean;
-  /** Newest host-process output lines, so a crash report can quote them. */
-  logTail: PluginLogLine[];
-  /** Unterminated stdout/stderr fragments waiting for their newline. */
-  logFragments: Map<string, string>;
 };
 
 type PluginApiError = Error & { code?: string };
@@ -1196,10 +1148,9 @@ export function resolveInsidePlugin(pluginPath: string, relative: string): strin
 /**
  * Resolve one theme's declared assets to files inside the plugin package.
  *
- * The manifest validator already checked the shape; here each entry has to
- * exist, stay out of the dependency directory, and fit the declared total. A
- * theme that asks for more than the budget gets none of its assets, so a sheet
- * referencing one is refused instead of served from a half-honoured list.
+ * Package-relative assets are canonicalized after the plugin's `onLoad` hook
+ * and rechecked by `resolveThemeAsset` before every host-scheme read. Absolute
+ * assets retain their existing behavior.
  */
 function resolveThemeAssets(
   pluginPath: string,
@@ -1211,13 +1162,13 @@ function resolveThemeAssets(
   let dropped = 0;
   for (const asset of declared) {
     const normalized = normalizeThemeAssetPath(asset);
-    if (!normalized || normalized.split("/").includes("node_modules")) {
+    if (!normalized || normalized.split("/").some((segment) => segment.toLowerCase() === "node_modules")) {
       dropped += 1;
       continue;
     }
     const absolute = isExternalThemeAssetPath(normalized)
-      ? normalized
-      : resolveInsidePlugin(pluginPath, normalized);
+      ? resolveAbsoluteThemeAssetPath(normalized)
+      : resolvePackageThemeAssetPath(pluginPath, normalized);
     if (!absolute || !existsSync(absolute)) {
       dropped += 1;
       continue;
@@ -1347,12 +1298,15 @@ export class PluginRuntime {
    * so a path nobody declared has no URL at all (ADR 0248).
    */
   private themeAssets = new Map<string, Map<string, string>>();
+  private themeAssetGroups = new Map<string, Map<string, ReadonlyMap<string, string>>>();
   private mcpClients = new Map<string, McpServerClient[]>();
+  private readonly mcpCalls = new McpCallRegistry();
   private serviceStates = new Map<string, PluginServiceStatus>();
   private restarts = new Map<string, RestartRecord>();
   private busSubscriptions = new Map<string, BusSubscription>();
   private busRate = new Map<string, { windowStart: number; count: number }>();
   private readonly toolInvocations = new PluginToolInvocations();
+  private readonly rendererCalls = new RendererCallRelay();
   private completeRate = new Map<string, { windowStart: number; count: number }>();
   /**
    * File accesses the user allowed for the rest of the run, keyed
@@ -1515,9 +1469,11 @@ export class PluginRuntime {
   private externalThemeAsset(loaded: LoadedPlugin, target: string): string | null {
     const key = normalizeThemeAssetPath(target);
     if (!key || !isExternalThemeAssetPath(key)) return null;
+    const absolute = resolveAbsoluteThemeAssetPath(key);
+    if (!absolute) return null;
     let stats: Stats;
     try {
-      stats = statSync(key);
+      stats = statSync(absolute);
     } catch {
       return null;
     }
@@ -1527,14 +1483,25 @@ export class PluginRuntime {
       registry = new Map();
       this.themeAssets.set(loaded.manifest.id, registry);
     }
-    registry.set(key, key);
+    registry.set(key, absolute);
     return themeAssetUrl(loaded.manifest.id, key);
   }
 
-  resolveThemeAsset(pluginId: string, assetPath: string): string | null {
+  resolveThemeAsset(pluginId: string, assetPath: string): Uint8Array | null {
     const normalized = normalizeThemeAssetPath(assetPath);
     if (!normalized) return null;
-    return this.themeAssets.get(pluginId)?.get(normalized) ?? null;
+    const registered = this.themeAssets.get(pluginId)?.get(normalized);
+    if (!registered) return null;
+    const loaded = this.loaded.get(pluginId);
+    if (!loaded) return null;
+    const current = isExternalThemeAssetPath(normalized)
+      ? resolveAbsoluteThemeAssetPath(normalized)
+      : resolvePackageThemeAssetPath(loaded.path, normalized);
+    if (current !== registered) return null;
+    const groups = this.themeAssetGroups.get(pluginId);
+    const owners = groups ? [...groups.values()].filter((group) => group.has(normalized)) : [];
+    if (owners.some((group) => !themeAssetGroupWithinBudget(loaded.path, group))) return null;
+    return readThemeAssetBytes(registered);
   }
 
   /** Supervision state of every resident service, ordered for a stable list. */
@@ -1551,7 +1518,7 @@ export class PluginRuntime {
    * only, and the size cap is re-checked because the file may have changed
    * since load.
    */
-  loadSkillBody(id: string): { id: string; name: string; body: string } {
+  loadSkillBody(id: string): LoadedSkillDocument {
     const skill = this.skills.get(id);
     if (!skill) throw apiError("NOT_FOUND", `unknown skill: ${id}`);
     if (!this.loaded.has(skill.pluginId)) {
@@ -1577,7 +1544,37 @@ export class PluginRuntime {
       skillId: skill.id,
       ts: Date.now(),
     });
-    return { id: skill.id, name: skill.name, body: parsed.body };
+    return { id: skill.id, name: skill.name, body: parsed.body, location: skill.path };
+  }
+
+  /**
+   * Source resolver behind the `plugin-renderer://` scheme: the current load
+   * of a permission-granted plugin serves module files from inside its own
+   * package, and nothing else (`docs/plugin-plan/ui/`).
+   */
+  resolveRendererSource(pluginId: string, generation: number, requestPath: string): string | null {
+    return resolveRendererSourcePath(this.loaded.get(pluginId), generation, requestPath);
+  }
+
+  /** What the renderer host loads for this plugin, while it may load anything. */
+  rendererDescriptor(pluginId: string): PluginRendererDescriptor | undefined {
+    return rendererDescriptorFor(this.loaded.get(pluginId));
+  }
+
+  /**
+   * The `plugin.call` relay: a renderer slot component asks its own plugin
+   * for one JSON answer (`docs/plugin-plan/render/plugin-call/`).
+   */
+  async callRenderer(pluginId: string, method: string, args: unknown): Promise<unknown> {
+    const loaded = this.loaded.get(pluginId);
+    return this.rendererCalls.call(
+      pluginId,
+      loaded?.child ? loaded : undefined,
+      method,
+      args,
+      (plugin, payload, timeoutMs) =>
+        this.sendToChild(plugin, { t: "call", method: "renderer.call", payload }, timeoutMs),
+    );
   }
 
   getLoaded(pluginId: string): LoadedPlugin | undefined {
@@ -1786,7 +1783,9 @@ export class PluginRuntime {
             ),
           );
 
-    const entry = this.services.hostEntry ?? join(__dirname, "plugin-host-process.js");
+    const entry =
+      this.services.hostEntry ??
+      join(getModuleDirectory(import.meta.url), "plugin-host-process.js");
     const spawn = this.services.spawnProcess ?? spawnUtilityProcess;
     const child = await spawn({ pluginId: manifest.id, entry, pluginPath });
 
@@ -1803,8 +1802,6 @@ export class PluginRuntime {
       pending: new Map(),
       nextCallId: 1,
       disposing: false,
-      logTail: [],
-      logFragments: new Map(),
     };
     this.loaded.set(manifest.id, loaded);
 
@@ -1812,9 +1809,6 @@ export class PluginRuntime {
     child.onExit((code) => this.handleChildExit(loaded, code));
     child.onLog?.((level, message) => {
       if (!message) return;
-      // Stream data events are arbitrary chunks, not logical lines. Keep the
-      // audit shape unchanged, but only put complete lines in the crash tail.
-      appendPluginLogChunk(loaded.logTail, loaded.logFragments, level, message);
       this.services.audit?.({
         pluginId: manifest.id,
         api: "plugin.stdio",
@@ -1869,6 +1863,7 @@ export class PluginRuntime {
   /** Abort this session's invocations without affecting sibling sessions. */
   cancelSessionTools(sessionId: string, reason = "Session tool execution aborted"): void {
     this.toolInvocations.cancelSession(sessionId, reason);
+    this.mcpCalls.cancelSession(sessionId);
   }
 
   /** Deregister contributions, run `onUnload` in the child, then stop it. */
@@ -1967,6 +1962,7 @@ export class PluginRuntime {
    * `onUnload` must never be the reason the app appears to hang on quit.
    */
   async disposeAll(): Promise<void> {
+    this.mcpCalls.cancelAll();
     const loadedPlugins = [...this.loaded.values()];
     // Mark first, in one pass: a child that dies while a sibling is still
     // stopping must already be covered by the guard in `handleChildExit`.
@@ -2048,7 +2044,7 @@ export class PluginRuntime {
         ok: true,
         ts: Date.now(),
       });
-      this.services.onPluginReloaded?.({ pluginId, name: manifest.name, ok: true });
+      await this.services.onPluginReloaded?.({ pluginId, name: manifest.name, ok: true });
     } catch (error) {
       const message = (error as Error).message;
       this.services.audit?.({
@@ -2058,7 +2054,7 @@ export class PluginRuntime {
         message,
         ts: Date.now(),
       });
-      this.services.onPluginReloaded?.({ pluginId, name, ok: false, message });
+      await this.services.onPluginReloaded?.({ pluginId, name, ok: false, message });
     } finally {
       this.reloading.delete(pluginId);
     }
@@ -2827,15 +2823,11 @@ export class PluginRuntime {
     if (loaded.disposing) return;
     if (this.loaded.get(loaded.manifest.id) !== loaded) return;
     const pluginId = loaded.manifest.id;
-    // The exit code is the whole diagnosis for a crash report: a Windows hard
-    // fault (0xC0000005 and friends) and a plugin's own `process.exit(1)` are
-    // different bugs, and only this number tells them apart. The plugin's last
-    // output line rides along because a plugin that died on a thrown error
-    // usually printed the reason first, and the report a user can paste is the
-    // one place that evidence has to survive.
-    flushPluginLogTail(loaded.logTail, loaded.logFragments);
-    const detail = childExitDetail(code, loaded.logTail);
-    const lastOutput = lastLogLine(loaded.logTail);
+    // The exit code is the diagnosis for a crash report: a Windows hard fault
+    // (0xC0000005 and friends) and a plugin's own process.exit(1) are different
+    // bugs. Do not copy plugin stdout/stderr into user-visible errors or crash
+    // audit records because plugin output may contain workspace data or secrets.
+    const detail = childExitLabel(code);
     const exitCode = childExitUnsigned(code);
     const exitCodeHex = childExitHex(code);
     this.rejectPending(
@@ -2855,7 +2847,6 @@ export class PluginRuntime {
       errorCode: "PLUGIN_CRASHED",
       exitCode,
       ...(exitCodeHex ? { exitCodeHex } : {}),
-      ...(lastOutput ? { message: lastOutput } : {}),
       ts: Date.now(),
     });
     this.services.showToast(`Plugin stopped unexpectedly: ${loaded.manifest.name}`, "error");
@@ -2864,7 +2855,6 @@ export class PluginRuntime {
       name: loaded.manifest.name,
       exitCode,
       ...(exitCodeHex ? { exitCodeHex } : {}),
-      ...(lastOutput ? { lastOutput } : {}),
     });
     this.superviseCrash(loaded, code);
   }
@@ -3140,6 +3130,7 @@ export class PluginRuntime {
     // A gone plugin must stop serving its assets; the handler resolves through
     // this map only, so clearing it revokes every `plugin-asset:` URL at once.
     this.themeAssets.delete(pluginId);
+    this.themeAssetGroups.delete(pluginId);
     // Closing the client kills the stdio child / drops the HTTP session, so a
     // disabled plugin leaves no process behind.
     for (const client of this.mcpClients.get(pluginId) ?? []) {
@@ -3418,6 +3409,12 @@ export class PluginRuntime {
         this.themeAssets.set(pluginId, registry);
       }
       for (const [assetPath, absolute] of assets.files) registry.set(assetPath, absolute);
+      let assetGroups = this.themeAssetGroups.get(pluginId);
+      if (!assetGroups) {
+        assetGroups = new Map();
+        this.themeAssetGroups.set(pluginId, assetGroups);
+      }
+      assetGroups.set(themeId, new Map(assets.files));
       this.themes.set(id, {
         id,
         pluginId,
@@ -3541,10 +3538,11 @@ export class PluginRuntime {
         continue;
       }
       // An http MCP endpoint is an outbound channel like any other, so it
-      // answers to the same allowlist rather than to its permission alone.
+      // answers to the same egress decision as pi.net.fetch: the allowlist,
+      // plus the install-time net.anyHost grant.
       if (server.transport === "http") {
         const url = String(server.url ?? "");
-        if (!isNetUrlAllowed(url, this.netDomains(loaded))) {
+        if (!isNetUrlAllowedWithGrant(url, this.netEgressGrant(loaded))) {
           this.skipMcpServer(
             pluginId,
             server.id,
@@ -3593,7 +3591,11 @@ export class PluginRuntime {
           // Remote code the desktop cannot inspect; never silently auto-approved.
           risk: "medium",
           schema: tool.inputSchema,
-          execute: async (toolArgs) => client.callTool(tool.name, toolArgs),
+          execute: async (toolArgs, ctx) => this.mcpCalls.run(
+            ctx?.sessionId,
+            (signal) => client.callTool(tool.name, toolArgs, signal),
+            ctx?.signal,
+          ),
         });
       }
     }
@@ -3936,14 +3938,27 @@ export class PluginRuntime {
   }
 
   /**
+   * The plugin's egress decision input: its allowlist plus whether the user
+   * granted `net.anyHost` at install. One shape for every chokepoint so the
+   * grant means the same thing everywhere.
+   */
+  private netEgressGrant(loaded: LoadedPlugin): PluginNetEgressGrant {
+    return {
+      domains: this.netDomains(loaded),
+      anyHost: loaded.permissions.has("net.anyHost"),
+    };
+  }
+
+  /**
    * Confine one outbound URL to the allowlist. Reading a secret only becomes a
    * leak when it can leave, so every host-owned egress path funnels through
-   * here — and an undeclared `net.domains` means nothing leaves at all.
+   * here — an undeclared `net.domains` means nothing leaves at all, unless the
+   * install-time `net.anyHost` grant lifted the allowlist.
    */
   private assertEgress(loaded: LoadedPlugin, url: string, api: string): void {
-    const domains = this.netDomains(loaded);
-    if (isNetUrlAllowed(url, domains)) return;
-    this.refuseEgress(loaded, url, api, domains);
+    const grant = this.netEgressGrant(loaded);
+    if (isNetUrlAllowedWithGrant(url, grant)) return;
+    this.refuseEgress(loaded, url, api, grant.domains);
   }
 
   /**
@@ -3952,9 +3967,9 @@ export class PluginRuntime {
    * the transport never opens a connection to an undeclared host.
    */
   private assertSocketEgress(loaded: LoadedPlugin, url: string): void {
-    const domains = this.netDomains(loaded);
-    if (isNetSocketUrlAllowed(url, domains)) return;
-    this.refuseEgress(loaded, url, "net.websocket.connect", domains);
+    const grant = this.netEgressGrant(loaded);
+    if (isNetSocketUrlAllowedWithGrant(url, grant)) return;
+    this.refuseEgress(loaded, url, "net.websocket.connect", grant.domains);
   }
 
   /** One refusal path for both schemes: same audit shape, same message. */
@@ -4166,7 +4181,9 @@ export class PluginRuntime {
     payload?: Record<string, unknown>,
   ): Promise<unknown> {
     this.assertPermission(loaded, "browser.cdp");
-    const api = this.hostApi(loaded).browser;
+    const context = loaded.manifest.id === "pi.browser" && typeof payload?.sessionId === "string" && typeof payload?.tabId === "string"
+      ? { sessionId: payload.sessionId, tabId: payload.tabId } : undefined;
+    const api = this.hostApi(loaded, context).browser;
     switch (method) {
       case "navigate":
         return api.navigate({
@@ -4658,7 +4675,7 @@ export class PluginRuntime {
     throw apiError("UNSUPPORTED", `host api not available: ${api}`);
   }
 
-  private hostApi(loaded: LoadedPlugin) {
+  private hostApi(loaded: LoadedPlugin, browserContext?: { sessionId: string; tabId: string }) {
     const pluginId = loaded.manifest.id;
     const pluginPath = loaded.path;
 
@@ -4869,6 +4886,7 @@ export class PluginRuntime {
             height: loaded.manifest.ui?.height ?? 360,
             htmlPath,
             netDomains: this.netDomains(loaded),
+            netAnyHost: loaded.permissions.has("net.anyHost"),
             allowMicrophone: loaded.permissions.has("ui.microphone"),
             ...(loaded.development ? { development: true } : {}),
           });
@@ -5616,7 +5634,8 @@ export class PluginRuntime {
           }
           const result = await this.services.browser.navigate(
             input,
-            this.browserSessionId(pluginId),
+            browserContext?.sessionId ?? this.browserSessionId(pluginId),
+            browserContext?.tabId,
           );
           this.services.audit?.({
             pluginId,
@@ -5638,7 +5657,7 @@ export class PluginRuntime {
             action === "reload" ||
             action === "stop"
           ) {
-            this.services.browser.action(action);
+            this.services.browser.action(action, browserContext?.sessionId, browserContext?.tabId);
           }
         },
         setBounds: (hole: unknown) => {
@@ -5668,7 +5687,7 @@ export class PluginRuntime {
           if (!this.services.browser) {
             throw apiError("UNAVAILABLE", "browser host missing");
           }
-          this.services.browser.openExternal();
+          this.services.browser.openExternal(browserContext?.sessionId, browserContext?.tabId);
           this.services.audit?.({
             pluginId,
             api: "browser.openExternal",

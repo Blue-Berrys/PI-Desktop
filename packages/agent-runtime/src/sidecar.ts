@@ -3,14 +3,13 @@
  * Protocol: NDJSON JSON-RPC on stdio with Electron main.
  * Host access is proxied through main (single host-core process).
  */
-import { createHash, randomUUID } from "node:crypto";
-import { constants as fsConstants } from "node:fs";
-import { copyFile, mkdir, readFile, realpath, stat } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { ModelAuth } from "@earendil-works/pi-ai";
 import { ParentHostProxy } from "./parent-host-proxy.js";
 import { visionFromModelConfig } from "./model-capabilities.js";
+import { hydrateAttachmentHistory } from "./attachment-history.js";
 import { classifyAgentError } from "./agent-errors.js";
+import { readLocalRequestErrorDetails } from "./local-request-errors.js";
 import {
   DesktopAgentRuntime,
   type PluginToolDef,
@@ -26,12 +25,12 @@ import {
   normalizeSupportedThinkingLevels,
   normalizeThinkingLevel,
 } from "./sidecar-config.js";
+import { matchesExpectedTurnId } from "./turn-target.js";
 import { applyNodeNetworkProxy } from "./node-proxy.js";
+import { applyAdditiveDefaultCaCertificates } from "./system-ca.js";
 import { NATIVE_PI_SESSION_PREFIX, nativePiService } from "./native-pi-session.js";
 import {
-  formatFileInsert,
   isCommandShellOption,
-  MAX_INLINE_IMAGE_BYTES,
   normalizeMode,
   normalizeNetworkProxy,
   OAUTH_AUTH_KIND,
@@ -45,7 +44,6 @@ import type {
   ContextCompactionSettings,
   CommandShellOption,
   Mode,
-  MessageAttachment,
   PlanExecution,
   SessionThinkingLevel,
   UiMessage,
@@ -158,122 +156,6 @@ function respond(id: string | number, result?: unknown, error?: unknown) {
   else write({ jsonrpc: "2.0", id, result });
 }
 
-function pathInside(root: string, candidate: string): boolean {
-  const child = relative(root, candidate);
-  return child === "" || (!child.startsWith("..") && !isAbsolute(child));
-}
-
-async function replayedAttachmentPath(
-  params: RuntimeParams,
-  attachment: NonNullable<UiMessage["attachments"]>[number],
-  source: string,
-): Promise<string> {
-  if (!params.scratchDir || !attachment.ref.startsWith("attachments/")) {
-    return source;
-  }
-  const root = resolve(params.scratchDir, "replayed");
-  await mkdir(root, { recursive: true });
-  const safeName =
-    attachment.name.replace(/[^\p{L}\p{N}._-]+/gu, "_") || "attachment";
-  const suffix = createHash("sha256")
-    .update(attachment.ref)
-    .digest("hex")
-    .slice(0, 12);
-  const target = resolve(root, `${safeName}-${suffix}`);
-  try {
-    await copyFile(source, target, fsConstants.COPYFILE_EXCL);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code !== "EEXIST") throw error;
-  }
-  return target;
-}
-
-async function hydrateAttachmentHistory(
-  history: UiMessage[],
-  params: RuntimeParams,
-): Promise<UiMessage[]> {
-  // Same helper the live prompt path uses, on the same override-shaped config,
-  // so a replayed image is inlined exactly when a fresh one would be.
-  const supportsVision = visionFromModelConfig(params.provider.modelConfig);
-  const roots = [
-    params.scratchDir,
-    params.projectPath,
-    params.attachmentsDir,
-  ].filter((value): value is string => Boolean(value));
-  const canonicalRoots = await Promise.all(
-    roots.map(async (root) => {
-      try {
-        return await realpath(root);
-      } catch {
-        return undefined;
-      }
-    }),
-  );
-  const resolveAttachment = async (
-    attachment: NonNullable<UiMessage["attachments"]>[number],
-  ): Promise<{ attachment: MessageAttachment; fallbackPath?: string }> => {
-    const ref = attachment.ref.trim();
-    if (!ref) return { attachment };
-    const candidate =
-      ref.startsWith("attachments/") && params.attachmentsDir
-        ? resolve(params.attachmentsDir, ref.slice("attachments/".length))
-        : isAbsolute(ref)
-          ? resolve(ref)
-          : params.projectPath
-            ? resolve(params.projectPath, ref)
-            : undefined;
-    if (!candidate) return { attachment };
-    try {
-      const canonical = await realpath(candidate);
-      if (!canonicalRoots.some((root) => root && pathInside(root, canonical))) {
-        return { attachment };
-      }
-      const shouldInline = attachment.kind === "image" && supportsVision;
-      const size = (await stat(canonical)).size;
-      const bytes =
-        shouldInline && size <= MAX_INLINE_IMAGE_BYTES
-          ? await readFile(canonical)
-          : undefined;
-      if (attachment.kind === "image" && supportsVision && bytes) {
-        return { attachment: { ...attachment, data: bytes.toString("base64") } };
-      }
-      return {
-        attachment,
-        fallbackPath: await replayedAttachmentPath(
-          params,
-          attachment,
-          canonical,
-        ),
-      };
-    } catch {
-      return { attachment };
-    }
-  };
-
-  return Promise.all(
-    history.map(async (message) => {
-      if (message.role !== "user" || !message.attachments?.length) return message;
-      const resolved = await Promise.all(message.attachments.map(resolveAttachment));
-      const fallbackPaths = resolved
-        .map((item) => item.fallbackPath)
-        .filter((path): path is string => Boolean(path))
-        .map((path) => formatFileInsert(path, "file"))
-        .join("")
-        .trim();
-      const content = message.content.trim()
-        ? fallbackPaths
-          ? `${message.content}\n${fallbackPaths}`
-          : message.content
-        : fallbackPaths;
-      return {
-        ...message,
-        content,
-        attachments: resolved.map((item) => item.attachment),
-      };
-    }),
-  );
-}
-
 async function runtimeFor(
   params: RuntimeParams,
   currentPrompt?: string,
@@ -364,18 +246,30 @@ async function runtimeFor(
         compaction?: ContextCompactionRecord;
       } | null;
     }>("session.get", { id: sessionId });
-    history = await hydrateAttachmentHistory(detail?.session?.messages ?? [], params);
+    let restoredMessages = detail?.session?.messages ?? [];
+    // The current prompt is sent separately below. Exclude its persisted row
+    // before attachment hydration so it cannot consume the history byte budget.
+    if (currentPrompt !== undefined && params.userMessageId) {
+      const last = restoredMessages.at(-1);
+      if (last?.role === "user" && last.id === params.userMessageId) {
+        restoredMessages = restoredMessages.slice(0, -1);
+      }
+    }
+    const supportsVision = visionFromModelConfig(params.provider.modelConfig);
+    history = await hydrateAttachmentHistory(restoredMessages, {
+      scratchDir: params.scratchDir,
+      projectPath: params.projectPath,
+      attachmentsDir: params.attachmentsDir,
+      supportsVision,
+    });
     compaction = detail?.session?.compaction;
   } catch {
     // History restore is best-effort; a prompt can still start cleanly.
   }
-  if (currentPrompt !== undefined) {
+  // Older callers without a stable message id retain the previous content match.
+  if (currentPrompt !== undefined && !params.userMessageId) {
     const last = history.at(-1);
-    if (
-      last?.role === "user" &&
-      ((params.userMessageId && last.id === params.userMessageId) ||
-        (!params.userMessageId && last.content === currentPrompt))
-    ) {
+    if (last?.role === "user" && last.content === currentPrompt) {
       history = history.slice(0, -1);
     }
   }
@@ -603,9 +497,9 @@ async function handle(method: string, params: any): Promise<unknown> {
       }
       const runtime = runtimes.get(sessionId);
       const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
-      if (turnId && runtime?.getStatus().currentTurnId !== turnId) return { ok: false, aborted: false };
+      if (!matchesExpectedTurnId(runtime?.getStatus().currentTurnId, turnId)) return { ok: false, aborted: false };
       await hostProxy.call("plans.abort", { sessionId, ...(turnId ? { turnId } : {}) }).catch(() => undefined);
-      if (runtime && runtimes.get(sessionId) === runtime && (!turnId || runtime.getStatus().currentTurnId === turnId)) {
+      if (runtime && runtimes.get(sessionId) === runtime && matchesExpectedTurnId(runtime.getStatus().currentTurnId, turnId)) {
         await runtime.abort();
       }
       return { ok: true };
@@ -616,6 +510,10 @@ async function handle(method: string, params: any): Promise<unknown> {
         return nativePiService().abort(sessionId);
       }
       const runtime = runtimes.get(sessionId);
+      const turnId = typeof params.turnId === "string" ? params.turnId : undefined;
+      if (!matchesExpectedTurnId(runtime?.getStatus().currentTurnId, turnId)) {
+        return { requested: false };
+      }
       return runtime?.requestGracefulStop() ?? { requested: false };
     }
     case "asktool.resolve": {
@@ -695,10 +593,15 @@ readNdjsonLines(process.stdin, async (line) => {
     const result = await handle(msg.method, msg.params ?? {});
     respond(msg.id, result);
   } catch (err: any) {
+    // Restore validation can fail before a runtime/stream exists. Preserve its
+    // safe provenance in the existing RPC error data instead of flattening it.
+    const local = readLocalRequestErrorDetails(err) ? classifyAgentError(err) : undefined;
     respond(msg.id, undefined, {
       code: err.rpcCode ?? -32000,
-      message: err instanceof Error ? err.message : String(err),
-      data: { errorCode: err.errorCode ?? "INTERNAL" },
+      message: local?.message ?? (err instanceof Error ? err.message : String(err)),
+      data: local
+        ? { errorCode: local.code, retriable: local.retriable, details: local.details }
+        : { errorCode: err.errorCode ?? "INTERNAL" },
     });
   }
 });
@@ -725,4 +628,7 @@ if (bootProxy) {
     // Invalid boot payload is ignored; sidecar.configure will replace it.
   }
 }
+// The default TLS context is configured before any provider request can be
+// issued, so the merged CA set covers every transport this sidecar builds.
+applyAdditiveDefaultCaCertificates();
 process.stderr.write("[agent-sidecar] ready (host-proxy mode)\n");

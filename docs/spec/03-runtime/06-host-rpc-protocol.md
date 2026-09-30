@@ -291,10 +291,12 @@ to later refresh and inference; the vendor picker does not collect them.
   The child inherits project/provider/model/mode/thinking and
   permission configuration, receives new message/tool-call ids, and starts
   without turns, revisions, notifications, artifacts, grants, or scratch data.
-  Missing sources return `NOT_FOUND`; Electron rejects active sources with
-  `AGENT_BUSY` before forwarding and normalizes the host's persisted
-  running-turn `CONFLICT` fallback to `AGENT_BUSY`; an unknown source or
-  `throughMessageId` returns `NOT_FOUND`
+  Missing sources or anchors return `NOT_FOUND`. While a Desktop source runs,
+  only a completed assistant prefix containing no indexed messages owned by a
+  running turn is allowed. This check and publication share the host RPC lock.
+  Whole-session, non-assistant, streaming/error, or live-turn anchors return
+  `CONFLICT`, normalized by Electron to `AGENT_BUSY`. The source turn continues
+  without sharing runtime state with the child.
 - `session.get` — accepts an optional renderer read window:
   `messageBefore` is the exclusive zero-based end offset, `messageLimit` is
   the positive page size, and `contentLimit` is the positive character budget
@@ -486,6 +488,28 @@ The host rejects unknown roles, non-RFC3339 or non-monotonic timestamps, and
 oversized/deep payloads. Tool values are sanitized for host-reserved keys. The
 per-plugin rolling limits are 10 single imports, 5 batch imports, and 20
 deletes per 60 seconds. P2/P3 methods are not present in protocol v11.
+
+### Session Todo checklist
+
+- `todos.get({ sessionId })` returns the committed checklist snapshot for a live
+  Desktop session: `{ sessionId, todos, revision, updatedAt }`. Unknown or
+  soft-deleted sessions return `NOT_FOUND`; native Pi sessions and blank ids are
+  rejected as `INVALID_ARGUMENT`.
+- `tools.execute` with `toolName: "TodoWrite"` accepts only `{ todos }` and
+  replaces the complete ordered checklist. The host trims content, defaults
+  priority to `medium`, truncates overlong Unicode content at 500 characters
+  with a warning, demotes later `in_progress` items to `pending`, and rejects
+  more than 50 items or malformed values. The owner session and running turn
+  come from the trusted transport fields, never from tool arguments.
+- TodoWrite is allowed only for an Agent session's own running turn. Plan/Goal,
+  delegated, plugin, and MCP calls receive a tool result error and do not mutate
+  storage. A successful replacement advances the session revision even when
+  `todos` is empty and emits `todos.changed` after the transaction commits.
+  The event payload is the same complete snapshot returned by `todos.get`.
+- SQLite ownership is host-core only. The renderer receives snapshots through
+  Electron Main IPC, keeps them by session id, and ignores revisions older than
+  or equal to the cached revision. Remote RACP sessions are local-only for this
+  vertical slice because RACP v1 has no Todo snapshot operation.
 
 ### Stats
 
@@ -736,6 +760,10 @@ type NotificationListResult = {
 - `notification.markAllRead({}) -> { ok: true }` updates every unread row in
   one transaction.
 - `notification.clear({}) -> { ok: true }` deletes inbox rows only.
+- `id` is the stable exactly-once key for renderer and native delivery. A
+  client must discard duplicate or delayed records for an id it has already
+  acknowledged/cleared; clearing the inbox never makes an old terminal turn
+  eligible for insertion again. A later terminal turn receives a new id.
 - No `notification.created` JSON-RPC server notification is emitted. Electron
   receives the inserted record directly from `session.endTurn`, avoiding a
   second ordering channel between terminal turn persistence and UI refresh.
@@ -793,7 +821,7 @@ Authoritative mode and workspace resolution are session-scoped:
 For `Read`/`Glob`/`Grep`/`Write`/`Edit`, the host classifies an explicit path
 outside the workspace and scratch roots before the low-risk auto-allow rule.
 `auto` executes it, while `ask` and `accept-edits` emit
-`permissions.request`; denial, timeout, or cancellation returns `TOOL_DENIED`
+`permissions.request`; denial or cancellation returns `TOOL_DENIED`
 without executing the operation. Relative `..` and symlink escapes use the
 same classification. Bash's working directory and implicit recursive walks do
 not inherit this exception.
@@ -1055,7 +1083,6 @@ params: {
   risk: "low" | "medium" | "high"
   argsPreview: unknown
   reason: string
-  timeoutMs: 120000
 }
 ```
 
@@ -1069,14 +1096,16 @@ params: {
 }
 ```
 
-Timeout behavior (**D005**): after 120s unresolved → deny.
+Local permission behavior (**D636 / ADR 0310**): an unresolved request remains
+pending until an explicit decision, cancellation, or host/process shutdown.
+The transport does not apply a deadline to `tools.execute`; tool-specific
+execution budgets still apply after approval.
 
 `permissions.pending` returns the open requests as Host state (D374/D375):
 `{ requests: PendingPermission[] }`, oldest first, optionally scoped by
 `sessionId`. Each entry carries the same fields as the `permissions.request`
-notification plus `createdAt`, `expiresAt`, and `remainingMs`. Requests past
-the timeout are omitted. A client that attaches after the notification was
-emitted reads this list and answers through the unchanged
+notification plus `createdAt`. Requests remain listed until settled. A client
+that attaches after the notification was emitted reads this list and answers through the unchanged
 `permissions.resolve`; the notification path itself does not change.
 
 ## 7. Error codes
@@ -1092,6 +1121,7 @@ numeric slot; the string is the contract, the number is transport detail.
 | 1001 | HOST_SHUTTING_DOWN | the host is draining after EOF and refused the call |
 | 1002 | INVALID_PARAMS | schema validation failed |
 | 1002 | MODEL_ALIAS_TOO_LONG | provider row alias exceeds 60 code points |
+| 1002 | MODEL_BINDINGS_DEGRADED | stored model bindings are unreadable; explicit model-array replacement is refused |
 | 1003 | NOT_FOUND | entity missing (legacy slot, kept for old callers) |
 | 1006 | RATE_LIMITED | a per-caller budget window was exhausted |
 | 1007 | NOT_FOUND | entity missing |
@@ -1166,7 +1196,7 @@ Tool outcomes (`TOOL_DENIED`, `TOOL_TIMEOUT`, `PATH_OUTSIDE_WORKSPACE`,
 1. Electron spawns host and completes handshake
 2. health method returns ok
 3. denied tool path returns `TOOL_DENIED`
-4. timeout path returns deny decision after 120s
+4. an unresolved permission remains pending until an explicit decision or cancellation
 5. switching the selected workspace from A to B does not change the tool root
    of a call issued by session A
 6. Protocol v4 `session.endTurn` creates/returns exactly one notification for
@@ -1210,3 +1240,68 @@ Create requires title, prompt and cadence; automatic daily/weekly tasks require
 a schedule. Update takes an existing ID and partial fields, preserving all
 unspecified configuration. Exact local times remain supported despite the
 UI's four period presets. No new DB schema or transport is introduced.
+
+### Scheduled tasks: task-owned execution settings
+
+Desktop create/update may save `workspacePath`, `permissionMode` and a paired
+`providerId`/`modelId` on one task. Run now and automatic execution use those
+values when present. Missing fields preserve legacy project capture, app-default
+model resolution and permission behavior. Invalid permission values and partial
+model pairs are rejected before mutation. Conversation tools do not expose these
+fields and remain bound to the calling session's project. See ADR 0305.
+
+Tasks also persist optional `thinkingLevel` using the existing session values
+(including `off` and `omit`). The full Composer model/reasoning picker and
+controller are reused with a task-draft configuration callback. Both manual and
+automatic runs apply the saved level. Missing or cleared levels retain the
+legacy `off` behavior; no database migration is required.
+
+### Scheduled tasks: independent task dispatch
+
+The Electron runner admits independent due tasks without awaiting another task's prompt setup. Local in-flight ownership is keyed by task ID and Host instance until setup settles; Host remains authoritative for enabled, due and overlap checks. A replaced Host's completion cannot clear its successor's local ownership. Stop prevents new polls; admitted work keeps the existing execution/failure lifecycle. Failures remain observable and the 90-second late policy is unchanged.
+### Scheduled tasks: project removal and automations
+
+Removing a project pauses its bound scheduled tasks without deleting their definitions, schedule, workspace binding or run history. Session references in history may become null when the project's conversations are removed. Already admitted task runs block removal even before a conversation turn starts. Tasks belonging to other projects and unbound legacy tasks are unaffected. Explicit resume or Run now may recreate a project from the preserved path; automatic polling cannot do so while paused.
+### Scheduled tasks: legacy task maintenance
+
+Agent tools allow title, prompt and pause updates on legacy automatic tasks without a schedule, including an echoed unchanged cadence. These edits do not arm the task or capture the foreground workspace. Explicit enabling, a cadence change or a supplied schedule still follows schedule validation. Resume requires an explicit valid schedule; Manual-to-Hourly retains its existing default interval behavior.
+### Scheduled tasks: calendar intent
+
+The optional config_json.calendarConfigured boolean distinguishes an explicitly configured Daily/Weekly calendar from Hourly's internal schedule placeholder. Without the key, legacy Daily/Weekly schedules are treated as configured; legacy Hourly schedules retain their values but require an explicit schedule when converting to Daily/Weekly. Known calendar intent survives Hourly and restart, including midnight. Clearing or replacing the calendar with a different non-calendar placeholder clears intent. This additive extension needs no table/schema migration; older versions ignore it and cannot enforce the new conversion guard. Metadata-only edits and Manual-to-Hourly remain unchanged.
+### Scheduled tasks: workspace identity
+
+Stored workspace bindings use the existing project canonicalization contract on both write and read. On Windows, slash direction, case, trailing separators and extended path prefixes do not hide a task from its own project's conversation. The distinction between missing legacy bindings and explicit null remains unchanged. Foreign-project tools cannot list or mutate bound tasks.
+
+### Cloud configuration sync
+
+The Host exposes the `configSync.getState`, `configSync.test`,
+`configSync.configure`, `configSync.syncNow`, `configSync.pause`,
+`configSync.unlock`, `configSync.approve`, `configSync.reject`,
+`configSync.mapProject`, `configSync.listHistory`, `configSync.restore`,
+`configSync.changePassword`, and
+`configSync.disconnect` methods through the existing Electron Host bridge.
+These methods operate on the Host-owned encrypted vault and the explicit
+portable-domain adapter registry. They do not expose raw secrets or local
+filesystem bindings to the Renderer.
+
+`configSync.test` performs a capability probe against a temporary remote
+object and reports whether reliable strong conditional writes are available.
+`configSync.syncNow` and the five-minute automatic poll serialize per vault,
+reconcile against the last acknowledged base, publish immutable encrypted
+objects followed by a conditional head update, and retain unresolved
+conflicts/security-sensitive imports as pending state. A failed head
+precondition restarts from the newly read head; it never overwrites blindly.
+
+`configSync.listHistory` returns revision IDs, creation timestamps, parent IDs,
+and counts without decrypting data in the Renderer. `configSync.restore` requires
+an explicit propagation acknowledgement, writes an encrypted local recovery
+point, publishes a new head with a CAS, and keeps executable/security-sensitive
+entities pending until local approval. `configSync.changePassword` updates the
+wrapped-key header with a strong-ETag CAS; it does not revoke copied old vault
+keys.
+
+The public result is a redacted state snapshot. `configSync.changed` is a Host
+notification carrying that same snapshot. Approval and rejection require the
+current entity digest, so a security-relevant edit cannot reuse an older local
+decision. Disconnect deletes only local credentials, vault keys, metadata and
+staging files; remote objects remain intact.

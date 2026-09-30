@@ -4,14 +4,12 @@ import { useAppStore } from "../../stores/app-store";
 import { api } from "../../lib/api";
 import { usePluginBrowseState } from "./browse-state";
 import type {
-  ActivationScope,
   MarketPluginDetail,
   MarketPluginSummary,
   PluginPermissionReview,
   PluginServiceStatus,
   PluginSummary,
   ProjectRecord,
-  ProjectWorkspace,
 } from "@pi-desktop/shared";
 import {
   GROUP_ORDER,
@@ -171,6 +169,12 @@ export function usePluginsPage() {
   };
 
   const closeDetail = () => {
+    // Escape leaves the opener focused; match pointer dismissal without
+    // removing the focus indicator used by subsequent keyboard navigation.
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused.matches(".plugins-card-hit")) {
+      focused.blur();
+    }
     setSelectedId(null);
     setDetail(null);
     setSelectedVersion("");

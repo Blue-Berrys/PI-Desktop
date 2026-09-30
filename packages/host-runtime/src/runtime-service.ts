@@ -3,6 +3,8 @@ import { randomUUID } from "node:crypto";
 import type { RuntimePort, TurnStartRequest, TurnSteerRequest } from "@pi-desktop/agent-host";
 import {
   ErrorCodes,
+  compactionRecordId,
+  isRpcTimeoutError,
   type AgentEventEnvelope,
   type AgentStatus,
   type AskToolResolution,
@@ -180,6 +182,7 @@ export class RuntimeService implements RuntimePort {
             reason: permission.reason,
             ...(asking?.agentName ? { agentName: asking.agentName } : {}),
             ...(asking?.parentToolCallId ? { parentToolCallId: asking.parentToolCallId } : {}),
+            ...(asking?.nestedParentToolCallId ? { nestedParentToolCallId: asking.nestedParentToolCallId } : {}),
           },
         },
       });
@@ -455,8 +458,26 @@ export class RuntimeService implements RuntimePort {
     if (!detail.session) throw typedError("Session not found", ErrorCodes.NOT_FOUND);
     const launch = await this.options.launch.resolve(sessionId, detail.session, settings ?? {});
     sidecar.setProjectInstructionRoot(sessionId, launch.projectPath);
-    const result = await sidecar.call<{ accepted?: boolean }>("agent.compact", launch.sidecarParams);
-    return { accepted: result?.accepted !== false };
+    // A lost reply says nothing about the sidecar's own verdict: it keeps
+    // summarizing and persists the checkpoint through host-core, so the durable
+    // record decides whether this manual compaction succeeded (issue #795).
+    const startedWith = compactionRecordId(detail.session);
+    try {
+      const result = await sidecar.call<{ accepted?: boolean }>("agent.compact", launch.sidecarParams);
+      return { accepted: result?.accepted !== false };
+    } catch (error) {
+      if (!isRpcTimeoutError(error)) throw error;
+      const settled = await host.call<{ session?: Record<string, unknown> | null }>("session.get", {
+        id: sessionId,
+      });
+      const landed = compactionRecordId(settled.session);
+      if (landed === startedWith) throw error;
+      this.options.log("warn", "manual compaction outlived its transport deadline; the checkpoint landed", {
+        sessionId,
+        compactionId: landed,
+      });
+      return { accepted: true };
+    }
   }
 
   async getStatus(sessionId: string): Promise<AgentStatus> {
@@ -623,7 +644,10 @@ export class RuntimeService implements RuntimePort {
     await this.events.flushCheckpoint(sessionId);
     if (this.activeTurns.get(sessionId) !== crashedTurnId) return;
     this.events.settleCheckpoint(sessionId);
-    await this.finishTurn(sessionId, "aborted", "PLAN_APPROVAL_INTERRUPTED", {
+    // The sidecar handle's exit info carries no stderr tail, so this path
+    // cannot classify a heap exhaustion; it still names the failure honestly
+    // instead of borrowing plan-approval vocabulary (issue #1077).
+    await this.finishTurn(sessionId, "aborted", ErrorCodes.AGENT_SIDECAR_CRASHED, {
       turnId: crashedTurnId,
       recoverInflight: true,
     });

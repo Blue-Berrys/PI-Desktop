@@ -1,4 +1,4 @@
-import { IPC, ErrorCodes, isGlobalPermissionMode, type AgentEventEnvelope, type AgentPromptRequest, type AgentSteerRequest, type UiMessage, type AgentQueuePushRequest, type AgentStopRequest, type AskToolResolution, type GlobalPermissionMode, type MessageUsage, type PlanExecutionFinishStatus, type PlanResolutionResult, type PlanResolveRequest, type PromptEnhancementRequest, type SessionSummarizeTitleRequest, canonicalThinkingLevel, type ThinkingLevel } from "@pi-desktop/shared";
+import { IPC, ErrorCodes, compactionRecordId, findSkillMentions, isGlobalPermissionMode, isRpcTimeoutError, type AgentEventEnvelope, type AgentPromptRequest, type AgentSteerRequest, type UiMessage, type AgentQueuePushRequest, type AgentStopRequest, type AskToolResolution, type GlobalPermissionMode, type MessageUsage, type PlanExecutionFinishStatus, type PlanResolutionResult, type PlanResolveRequest, type PromptEnhancementRequest, type SessionSummarizeTitleRequest, type VoiceOrigin, canonicalThinkingLevel, type ThinkingLevel } from "@pi-desktop/shared";
 import type { FinishTurn } from "../runtime/plans";
 import { expandSlashInvocation, enhancePromptDraft, summarizeSessionTitle, visionFromModelConfig, type ComposerTemplate, type RuntimeProviderConfig } from "@pi-desktop/agent-runtime";
 import { OAUTH_AUTH_KIND, type VendorOAuth } from "../oauth";
@@ -54,6 +54,25 @@ function rejectNativeAgentOperation(sessionId: string): void {
   if (sessionId.startsWith("native-pi:")) {
     throw Object.assign(new Error("Operation is unsupported for native Pi sessions"), { errorCode: "NATIVE_PI_UNSUPPORTED" });
   }
+}
+
+function parseVoiceOrigin(value: unknown): VoiceOrigin | undefined {
+  if (value === undefined) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw Object.assign(new Error("voiceOrigin is invalid"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+  }
+  const origin = value as Record<string, unknown>;
+  const keys = Object.keys(origin);
+  if (
+    keys.length !== 2 ||
+    !keys.includes("callId") ||
+    !keys.includes("operationId") ||
+    typeof origin.callId !== "string" || !origin.callId.trim() || origin.callId.length > 128 ||
+    typeof origin.operationId !== "string" || !origin.operationId.trim() || origin.operationId.length > 128
+  ) {
+    throw Object.assign(new Error("voiceOrigin is invalid"), { errorCode: ErrorCodes.INVALID_ARGUMENT });
+  }
+  return { callId: origin.callId, operationId: origin.operationId };
 }
 
 /** Register prompt, agent lifecycle, queue, approval and plan channels. */
@@ -256,6 +275,7 @@ export function registerAgentIpc({
         errorCode: ErrorCodes.INVALID_ARGUMENT,
       });
     }
+    const voiceOrigin = parseVoiceOrigin(req.voiceOrigin);
     // A steering input belongs to the turn it names: it is refused once that
     // turn was cancelled, has started finalizing, or no longer owns the session.
     if (!isTurnDispatchable(req.sessionId, req.expectedTurnId)) {
@@ -280,6 +300,7 @@ export function registerAgentIpc({
       createdAt: new Date().toISOString(),
       steering: true,
       ...(prepared.length ? { attachments: prepared.map((attachment) => attachment.message) } : {}),
+      ...(voiceOrigin ? { voiceOrigin } : {}),
     };
     // Revalidate inside the runtime after all file/host IO. A stale target must
     // never turn into a normal prompt or alter the next turn's configuration.
@@ -295,7 +316,13 @@ export function registerAgentIpc({
 
   handle(IPC.invoke.agentPrompt, async (req: AgentPromptRequest) => {
     if (!sidecar) throw new Error("sidecar unavailable");
+    const voiceOrigin = parseVoiceOrigin(req.voiceOrigin);
     if (req.sessionId.startsWith("native-pi:")) {
+      if (voiceOrigin) {
+        throw Object.assign(new Error("Live Voice work is unsupported for native Pi sessions"), {
+          errorCode: "NATIVE_PI_UNSUPPORTED",
+        });
+      }
       if (req.sessionMessageId || req.truncateFromMessageId || req.truncateBefore !== undefined || req.attachments?.length) {
         throw Object.assign(new Error("Native Pi continuation currently supports text prompts only"), {
           errorCode: ErrorCodes.INVALID_ARGUMENT,
@@ -442,28 +469,42 @@ export function registerAgentIpc({
     // /names stay literal text.
     let promptContent = sessionMessage?.content ?? req.content;
     let slashCommand: string | undefined;
-    if (!sessionMessage && req.content.startsWith("/")) {
+    let skillMentions: UiMessage["skillMentions"];
+    if (!sessionMessage && /(^|\s)\/\S/.test(req.content)) {
       try {
         const root = await optionalWorkspaceRoot();
         const commandEnd = req.content.search(/\s/);
-        const commandName = req.content.slice(
-          1,
-          commandEnd === -1 ? undefined : commandEnd,
-        );
+        const commandName = req.content.startsWith("/")
+          ? req.content.slice(1, commandEnd === -1 ? undefined : commandEnd)
+          : "";
         const commands = await composerCommandService.buildComposerCommands(
           launch.projectPath ?? root,
         );
         const command = commands.find((item) => item.name === commandName);
-        if (command?.kind === "skill" && command.skillId) {
-          const body = commandEnd === -1 ? "" : req.content.slice(commandEnd).trim();
+        const activeSkills = new Map(
+          commands.flatMap((item) => item.kind === "skill" && item.skillId
+            ? [[item.name, item.skillId] as const]
+            : []),
+        );
+        const mentions = findSkillMentions(req.content, activeSkills);
+        if (mentions.length > 0 && (!command || command.kind === "skill")) {
+          let body = "";
+          let end = 0;
+          for (const mention of mentions) {
+            body += req.content.slice(end, mention.start);
+            end = mention.end;
+          }
+          body = (body + req.content.slice(end)).trim();
+          const ids = [...new Set(mentions.map((mention) => mention.id))];
           promptContent = [
-            `Call the \`Skill\` tool with id ${JSON.stringify(command.skillId)} before answering this request. Follow the loaded skill instructions.`,
+            `Call the \`Skill\` tool with each of these ids before answering this request, in order: ${ids.map((id) => JSON.stringify(id)).join(", ")}. Follow the loaded skill instructions.`,
             body,
           ]
             .filter(Boolean)
             .join("\n\n");
           slashCommand = req.content;
-        } else {
+          skillMentions = mentions;
+        } else if (req.content.startsWith("/")) {
           const templates = await loadComposerTemplatesCached(root);
           const expansion = expandSlashInvocation(req.content, templates);
           if (expansion) {
@@ -530,7 +571,9 @@ export function registerAgentIpc({
       ...(preparedAttachments.length
         ? { attachments: preparedAttachments.map((attachment) => attachment.message) }
         : {}),
+      ...(voiceOrigin ? { voiceOrigin } : {}),
       ...(slashCommand ? { command: slashCommand } : {}),
+      ...(skillMentions ? { skillMentions } : {}),
       ...(revisionMeta?.revisionCount
         ? {
             revisionRootId: revisionMeta.rootUserId,
@@ -638,7 +681,26 @@ export function registerAgentIpc({
       settings,
     );
     sidecar.setProjectInstructionRoot(req.sessionId, launch.projectPath);
-    const result = await sidecar.call("agent.compact", launch.sidecarParams);
+    // A lost reply is not the sidecar's verdict: the sidecar keeps summarizing
+    // and persists the checkpoint through host-core, so the durable record
+    // decides whether this manual compaction succeeded (issue #795).
+    const startedWith = compactionRecordId(detail.session);
+    let result: unknown;
+    try {
+      result = await sidecar.call("agent.compact", launch.sidecarParams);
+    } catch (error) {
+      if (!isRpcTimeoutError(error)) throw error;
+      const settled = await host.call<{ session?: unknown }>("session.get", {
+        id: req.sessionId,
+      });
+      const landed = compactionRecordId(settled.session);
+      if (landed === startedWith) throw error;
+      logger.app("session", "warn", "manual compaction outlived its transport deadline; the checkpoint landed", {
+        sessionId: req.sessionId,
+        data: { compactionId: landed },
+      });
+      return { accepted: true };
+    }
     logger.app("session", "info", "context compacted manually", {
       sessionId: req.sessionId,
       data: { providerId: launch.providerId, modelId: launch.modelId },
@@ -693,8 +755,13 @@ export function registerAgentIpc({
 
   handle(IPC.invoke.agentStop, async (req: AgentStopRequest) => {
     if (!sidecar) throw new Error("sidecar unavailable");
+    const activeTurnId = activeTurns.get(req.sessionId);
+    if (req.turnId && activeTurnId !== req.turnId) {
+      return { requested: false };
+    }
     logger.app("session", "info", "prompt graceful stop requested", {
       sessionId: req.sessionId,
+      ...(req.turnId ? { turnId: req.turnId } : {}),
     });
     // The runtime owns the boundary decision. Do not close the durable turn
     // here: agent_end must arrive after the current reply/tool batch completes

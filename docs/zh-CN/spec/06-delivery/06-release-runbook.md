@@ -3,7 +3,7 @@
 > **翻译说明：** 本页是与 [英文源规格](/spec/06-delivery/06-release-runbook) 一一对应的机器辅助翻译。代码、协议字段和标识符保持原文；如翻译与英文源事实有歧义，以英文版本为准。
 
 
-> 范围：macOS arm64、Intel x64、Windows x64 和 Linux x64 的 D126/D285 标记工件；
+> 范围：macOS arm64、Intel x64、Windows x64 和 Linux x64 的 D126/D285/D603 标记工件；
 > macOS signing/notarization 保留下面的详细资格通道。
 > 交叉引用：[里程碑](/zh-CN/spec/06-delivery/01-mvp-milestones) · [进程模型](/zh-CN/spec/03-runtime/07-process-model) · [安全性](/zh-CN/spec/05-security/01-security)
 
@@ -204,22 +204,12 @@ Intel x64 通道发布 `PI-Desktop-<version>-x64.dmg` 和
 上传前，每个 macOS 运行器必须恰好生成一个带架构后缀的 DMG 和 ZIP（包括
 blockmap），任何无后缀或架构错误的 macOS 工件都会使发布失败。
 
-DMG 使用带有品牌视觉的 720×440 背景，只展示拖入 Applications 的双图标安装手势。
-窗口里只有应用和 Applications 链接；打开说明和可执行 command 助手都不放入 DMG。
+DMG 使用带品牌视觉的 720×440 背景，只展示拖入 Applications 的双图标安装手势。
+窗口里只有应用和 Applications 链接。
 
-macOS ZIP 在安装包根目录包含 `PI-Desktop-macOS-opening-help.txt` 和可执行的
-`PI-Desktop-macOS-open.command`。将 `PI-Desktop.app` 移动到 `/Applications` 或
-`~/Applications` 后，ZIP 用户可以双击该助手。它只搜索这两个固定位置，在存在时递归
-删除唯一的 `com.apple.quarantine` 属性，然后打开 PI-Desktop。在执行前它会校验
-`CFBundleIdentifier=net.aiuo.pi-desktop`。它不会使用 `sudo`，也不接受任意应用路径。
-标准系统位置的终端备用命令为：
-
-```sh
-xattr -r -d com.apple.quarantine /Applications/PI-Desktop.app
-```
-
-该助手仅适用于可信来源的未签名工件在 macOS 上提示应用已损坏的场景；已签名并公证
-的版本无需执行它。
+macOS ZIP 在安装包根目录包含 `PI-Desktop.app`。DMG 和 ZIP 都不附带打开说明或首次
+启动命令助手，本地与未签名调试构建也一样。标签发布工件仍会签名并公证；未签名通道
+仅用于调试，不代表已通过 Gatekeeper 验证。
 
 标签构建和 `sign_macos: true`（手动运行的默认值）仅从 GitHub Actions 密钥接收 `CSC_LINK`、`CSC_KEY_PASSWORD`、`APPLE_ID`、`APPLE_APP_SPECIFIC_PASSWORD` 和 `APPLE_TEAM_ID`，通过 `CSC_NAME=XingYu Liu (DUV63RKYTW)`（裸通用名——electron-builder 拒绝 `Developer ID Application:` 前缀）固定证书，强制代码签名与 `notarytool` 公证 `PI-Desktop.app`。随后 DMG 会由 `scripts/notarize-and-staple-macos-release-dmg.sh` 单独提交到同一个服务，只有返回 `Accepted` 才允许装订票据。之后验证身份、代码签名完整性（含 `pi-desktop-host-core`）、Gatekeeper `Notarized Developer ID` 以及两份已装订票据，再进行任何工件上传。
 
@@ -479,7 +469,7 @@ project/Temporary 使用消息加会话图标创建控件。
 
 该存储库为每个发布目标公开本机运行器构建命令。
 每个打包命令首先运行 `build:host-release`，然后捆绑代理
-运行时和 Electron 应用程序。D126/D285 标签工作流程发布这些输出及其
+运行时和 Electron 应用程序。D126/D285/D603 标签工作流程发布这些输出及其
 电子更新程序清单。在该目标操作系统上运行目标命令：
 
 ```text
@@ -489,10 +479,13 @@ Windows: pnpm --filter @pi-desktop/desktop dist:win
 Linux:   pnpm --filter @pi-desktop/desktop dist:linux
 ```
 
+Windows 的 `dist:win` 命令会运行 `scripts/build-desktop-release.mjs`，分别调用
+一次 electron-builder 构建 NSIS 和 ZIP，确保每个包写入正确的更新器发行类型标记。
+
 macOS 软件包包括按本机架构构建的 `bin/pi-desktop-host-core`；Windows
 软件包包括 `bin/pi-desktop-host-core.exe`；Linux 包括
 `bin/pi-desktop-host-core`。签名、回滚和安装程序升级资质仍保持发布
-硬化工作；发布本身已在 D126/D285 下启用。
+硬化工作；发布本身已在 D126/D285/D603 下启用。
 
 Native-runner 输出矩阵：
 
@@ -501,13 +494,15 @@ Native-runner 输出矩阵：
 - macOS Intel x64：`PI-Desktop-<version>-x64.dmg` 和
   `PI-Desktop-<version>-x64-mac.zip`
 - Windows x64：NSIS 安装程序 `PI-Desktop-Setup-<version>.exe` 和便携版
-  exe `PI-Desktop-Portable-<version>.exe`
+  ZIP `PI-Desktop-Portable-<version>.zip`
 - Linux x64：AppImage、deb 和 rpm
 - Linux x64 系统 Electron 产物：`PI-Desktop-<version>-linux-x64.asar`
 
-便携版 Windows 目标不会写入 `latest.yml`。已打包的便携版运行使用通知加链接
-交付（`PORTABLE_EXECUTABLE_FILE`）；NSIS 仍走应用内下载并在退出时安装。
-数据仍在现有应用数据目录。便携版请求 user 执行级别，因此启动不需要管理员权限。
+便携版 Windows ZIP 目标不会写入 `latest.yml`。Windows 发布脚本会分别构建 NSIS
+和 ZIP，并给 ZIP 的应用元数据写入 `piDistribution = "zip"`；已打包的 ZIP 运行使用
+通知加链接交付。旧便携版 exe 仍在存在 `PORTABLE_EXECUTABLE_FILE` 时保持手动更新。
+NSIS 仍走应用内下载并在退出时安装。数据仍在现有应用数据目录。用户解压 ZIP 后
+直接运行 `PI-Desktop.exe`，不会启动自解压包装器，也不会请求管理员权限。
 
 RPM 目标会向 FPM 传入 `_build_id_links none`。捆绑的 Electron 二进制文件位于
 `/opt/PI-Desktop` 下；省略全局 `/usr/lib/.build-id` 链接，可以避免与其他捆绑相同
@@ -533,6 +528,6 @@ electron PI-Desktop-<version>-linux-x64.asar
 
 ## 7. 已知限制
 
-- Linux deb/rpm 和 Windows 便携版 exe 仍保持通知和链接更新模式。打包的 macOS、Windows NSIS 和 Linux AppImage 使用应用内 `electron-updater`。
+- Linux deb/rpm 和 Windows 便携版 ZIP 仍保持通知和链接更新模式。打包的 macOS、Windows NSIS 和 Linux AppImage 使用应用内 `electron-updater`。
 - Linux x64 包在 Ubuntu 22.04 上构建，因此 host-core 需要 glibc 2.35 或更高版本（Ubuntu 22.04、Debian 12、Fedora 36+）。标签作业运行 `scripts/check-linux-host-glibc.mjs`，拒绝需要更新 glibc 的二进制文件。
 - 回滚、分阶段部署和预发布渠道政策仍是开放的发布工作。现有未签名 macOS 安装可能需要先手动安装一次已签名 DMG，之后应用内更新才能成功。

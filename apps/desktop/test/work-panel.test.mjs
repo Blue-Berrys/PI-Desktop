@@ -28,12 +28,10 @@ const panelSource = await readFile(
 const transcriptSource = await readTranscriptSource();
 const storeSource = await readStoreSource();
 const globalStyles = await loadStyles();
-test("closing a subagent panel restores focus to its transcript trigger", () => {
-  assert.match(panelSource, /const closeSubagentPanelAndFocus = useCallback/);
-  assert.match(panelSource, /data-subagent-trigger/);
-  assert.match(panelSource, /candidate\.dataset\.subagentTrigger === delegationId/);
-  assert.match(panelSource, /trigger\?\.focus\(\{ preventScroll: true \}\)/);
-  assert.match(panelSource, /onClick=\{closeSubagentPanelAndFocus\}/);
+test("closing a tab restores focus to its neighbor or the new-tab action", () => {
+  assert.match(panelSource, /const closeTabAndFocus = useCallback/);
+  assert.match(panelSource, /tabButtonRefs\.current\[nextTab\.id\]\?\.focus/);
+  assert.match(panelSource, /else newTabButtonRef\.current\?\.focus\(\)/);
 });
 
 test("work panel replaces the context panel overlay", async () => {
@@ -58,9 +56,10 @@ test("a viewport-fixed toggle is the sole pointer collapse control", () => {
   assert.match(appSource, /className="app-work-panel-toggle no-drag"/);
   assert.match(appSource, /aria-pressed=\{workPanelOpen \|\| presentedWorkPanelOpen\}/);
   assert.match(appSource, /togglePresentedWorkPanel/);
-  assert.match(appSource, /if \(store\.subagentPanel\) \{\s*store\.toggleWorkPanel\(\);/s);
   assert.doesNotMatch(appSource, /onCollapse=/);
-  assert.doesNotMatch(panelSource, /onCollapse/);
+  // The dock-only subagent branch is gone; the toggle routes through the
+  // panel's own open/collapse path.
+  assert.doesNotMatch(appSource, /store\.subagentPanel/);
   assert.doesNotMatch(panelSource, /work-panel-toolbar-collapse/);
   assert.match(
     globalStyles,
@@ -156,7 +155,7 @@ test("the work panel shortcut closes the panel it opened", () => {
     storeSource.indexOf("toggleWorkPanel: () => {"),
     storeSource.indexOf("openWorkPanelTabForSession: (sessionId, tab) => {"),
   );
-  assert.match(toggleBody, /get\(\)\.workPanelOpen/);
+  assert.match(toggleBody, /state\.workPanelOpen/);
   assert.match(toggleBody, /collapseWorkPanel\(\)/);
   assert.match(toggleBody, /openWorkPanel\(\)/);
 });
@@ -244,8 +243,10 @@ test("work panel header exposes a scrollable tab strip and direct new-page actio
   assert.match(panelSource, /data-work-panel-launcher-item=\{item\.id\}/);
   assert.doesNotMatch(panelSource, /aria-haspopup|work-panel-new-menu|role="menuitemradio"/);
   assert.match(panelSource, /role="tabpanel"/);
-  assert.match(panelSource, /className="work-panel-subagent-back"/);
-  assert.match(panelSource, /IconChevronLeft/);
+  // Subagent details are tabs, not a dock takeover: the bot icon labels the
+  // tab kind and no separate back control exists.
+  assert.match(panelSource, /subagent: IconBot/);
+  assert.doesNotMatch(panelSource, /work-panel-subagent-back|IconChevronLeft/);
   // Reopening an already-open plugin view must reuse its tab so the browser
   // keeps its location instead of being replaced by a blank singleton.
   assert.match(
@@ -293,6 +294,22 @@ test("plus creates a blank page and launcher rows open tools in that page", () =
   assert.match(storeSource, /replaceWorkPanelTab: \(sourceTabId, tab\) =>/);
   assert.match(storeSource, /replaceWorkPanelTabState/);
   assert.doesNotMatch(panelSource, /setMenuOpen|menuOpen|newTabMenuRef|createPortal/);
+});
+
+test("work panel tabs support pointer and keyboard reordering", () => {
+  assert.match(panelSource, /beginTabReorder/);
+  assert.match(panelSource, /data-work-panel-tab-id/);
+  assert.match(panelSource, /workPanelTabReorderShouldArm/);
+  assert.match(panelSource, /workPanelTabReorderInsertAfter/);
+  assert.match(panelSource, /workPanelTabReorderScrollDelta/);
+  assert.match(panelSource, /autoScrollFrame/);
+  assert.match(panelSource, /requestAnimationFrame\(tick\)/);
+  assert.match(panelSource, /data-work-panel-tab-reordering/);
+  assert.match(panelSource, /event\.altKey/);
+  assert.match(panelSource, /reorderWorkPanelTabs/);
+  assert.match(storeSource, /reorderWorkPanelTabs: \(sourceTabId, targetTabId, insertAfter\)/);
+  assert.match(storeSource, /reorderWorkPanelTabsState/);
+  assert.match(globalStyles, /\.work-panel-tab\.is-drop-before::before/);
 });
 
 test("work panel starts closed with no tabs and persists width only", () => {
@@ -434,15 +451,18 @@ test("work panel separator exposes internal panel width resizing", () => {
 });
 
 test("Electron enforces the responsive shell minimum", () => {
-  assert.match(mainSource, /const WINDOW_MIN_WIDTH = 1040/);
-  assert.match(mainSource, /const WINDOW_MIN_HEIGHT = 700/);
-  // The window creation clamps the minimum to fit the current work area, so
-  // the props are the clamped `initialMin*` values, both derived from
-  // `windowMin*` via `Math.min(windowMin*, restoreWorkArea.*)`.
+  assert.match(mainSource, /export const WINDOW_MIN_WIDTH = 800/);
+  assert.match(mainSource, /export const WINDOW_MIN_HEIGHT = 560/);
+  // The window creation clamps the minimum to fit the current work area
+  // (issues #544 / #1175), so the props are the clamped `initialMin*` values.
   assert.match(mainSource, /minWidth:\s*initialMinWidth/);
   assert.match(mainSource, /minHeight:\s*initialMinHeight/);
-  assert.match(mainSource, /initialMinWidth = Math\.min\(windowMinWidth/);
-  assert.match(mainSource, /initialMinHeight = Math\.min\(windowMinHeight/);
+  assert.match(
+    mainSource,
+    /\{ width: initialMinWidth, height: initialMinHeight \} =\s*clampMinimumSizeToWorkArea\(/,
+  );
+  // Every unconditional app-minimum reassertion goes through the same clamp.
+  assert.doesNotMatch(mainSource, /setMinimumSize\(windowMinWidth, windowMinHeight\);\n\s*\/\/ Prefer normal layer/);
 });
 
 test("built-in terminal is absent while the work panel keeps its other surfaces", () => {
@@ -540,7 +560,7 @@ test("the panel and a new tab share the same launcher rows", async () => {
   );
   // `Cmd/Ctrl+J` reveals the panel without creating a tab, while `+` creates
   // an explicit launcher tab. Both states offer the same tool rows.
-  assert.match(panelSource, /!subagentPanel && \(!activeTab \|\| activeTab\.kind === "new"\)/);
+  assert.match(panelSource, /\(\!activeTab \|\| activeTab\.kind === "new"\)/);
   assert.match(panelSource, /data-testid="work-panel-empty"/);
   assert.match(panelSource, /panel\.new\.title/);
   assert.match(panelSource, /panel\.toolsAndPanels/);
@@ -614,7 +634,12 @@ test("preview mode keeps shell actions and restores routes before navigation", (
   assert.match(appSource, /className=\{cx\([\s\S]*?"window-chrome-row"/);
   assert.match(appSource, /data-nav="new-task"/);
   assert.match(appSource, /<CollapsedTitlebarActions[\s\S]*?onNewTask=/);
-  assert.match(appSource, /\{ready && !showSplash && <WindowControls \/>\}/);
+  // `showSplash` stays true until the shell is ready, so the controls have to
+  // follow the boot surface that is actually up (splash or startup recovery).
+  assert.match(
+    appSource,
+    /\{\(ready && !showSplash\) \|\| startupPhase !== "starting" \? \(\s*<WindowControls \/>/,
+  );
   assert.match(appSource, /const workPanelMaximizedRef = useRef\(false\)/);
   assert.match(
     appSource,

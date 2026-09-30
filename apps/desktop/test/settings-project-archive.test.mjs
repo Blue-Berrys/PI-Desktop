@@ -70,6 +70,21 @@ test("project archive makes project sessions searchable and progressively visibl
   assert.match(projectsDetailSource, /projects-detail-task-updated/);
 });
 
+test("opening an archived project session restores it after selection succeeds", () => {
+  const openSession =
+    projectsPageSource.match(
+      /const openProjectSession = async[\s\S]*?\n  };/,
+    )?.[0] ?? "";
+  assert.match(openSession, /await selectSession\(sessionId\)/);
+  assert.match(openSession, /sessionMeta\[sessionId\]\?\.archived === true/);
+  assert.match(openSession, /restoreSession\(sessionId\)/);
+  assert.ok(
+    openSession.indexOf("await selectSession(sessionId)") <
+      openSession.indexOf("restoreSession(sessionId)"),
+    "the archive state changes only after the session opens successfully",
+  );
+});
+
 test("project archive is no longer a standalone app page", () => {
   assert.doesNotMatch(searchDialogSource, /page: "projects"/);
   assert.doesNotMatch(appSource, /page === "projects"/);
@@ -89,8 +104,10 @@ test("project archive is a toolbar over a list, with no page-level prose", () =>
   assert.match(projectsPageSource, /project\.clearSearch/);
   assert.match(projectsPageSource, /projects-result-count[^]*aria-live="polite"/);
   assert.match(projectsPageSource, /project\.resultCount/);
-  assert.match(projectsPageSource, /"settings-segment projects-sort"/);
-  assert.match(projectsPageSource, /aria-pressed=\{sort === mode\}/);
+  assert.match(projectsPageSource, /<SegmentedControl\s+value=\{sort\}/);
+  assert.match(projectsPageSource, /className="projects-sort"/);
+  assert.match(projectsPageSource, /itemClassName="projects-sort-btn"/);
+  assert.match(projectsPageSource, /role="group"/);
   assert.match(projectsPageSource, /project\.sortRecent/);
   assert.match(projectsPageSource, /project\.sortName/);
 

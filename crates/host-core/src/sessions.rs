@@ -11,6 +11,10 @@ use std::sync::{Mutex, OnceLock};
 
 use crate::transcripts::{self, CompactionRecord, MessageRecord, RevisionRecord};
 
+mod fork_files;
+mod usage;
+pub use usage::record_usage;
+
 pub const MODES: [&str; 3] = ["plan", "goal", "agent"];
 
 /// Maximum number of Unicode scalar values accepted for a user-defined title.
@@ -125,6 +129,10 @@ pub struct MessageUsage {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reasoning_tokens: Option<i64>,
     pub total_tokens: i64,
+    /// Additive accounting provenance and atomic operation ledger. Preserve these
+    /// JSON fields verbatim, including fields introduced by a newer producer.
+    #[serde(default, flatten)]
+    pub accounting: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -146,9 +154,18 @@ pub struct UiMessage {
     pub id: String,
     pub role: String,
     pub content: String,
+    /// Original text for a slash template or Skill invocation.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// Validated Skill tokens in `command`, with UTF-16 offsets for the renderer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill_mentions: Option<Vec<SkillMention>>,
     /// Host-authenticated agent-to-agent origin, never a human authorization.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_message: Option<Value>,
+    /// Minimal provenance for an accepted Live Voice work input.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voice_origin: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attachments: Option<Vec<MessageAttachment>>,
     /// Accepted input to an existing turn, preserved by Stop after renderer reload.
@@ -204,6 +221,8 @@ pub struct UiMessage {
     /// runtime excludes them from the parent's model context.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_tool_call_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nested_parent_tool_call_id: Option<String>,
     /// Subagent definition name that produced the row.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_name: Option<String>,
@@ -211,6 +230,14 @@ pub struct UiMessage {
     /// as an additive `hostedSearch` transcript block; no SQL migration.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hosted_search: Option<Value>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillMention {
+    pub start: usize,
+    pub end: usize,
+    pub id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -282,8 +309,17 @@ fn is_default_title(title: &str) -> bool {
 /// the search index row (None for tool rows, matching the FTS triggers).
 pub(crate) fn ui_to_record(message: &UiMessage) -> (MessageRecord, Option<String>) {
     let mut meta_obj = serde_json::Map::new();
+    if let Some(command) = &message.command {
+        meta_obj.insert("command".into(), json!(command));
+    }
+    if let Some(mentions) = &message.skill_mentions {
+        meta_obj.insert("skillMentions".into(), json!(mentions));
+    }
     if let Some(origin) = &message.session_message {
         meta_obj.insert("sessionMessage".into(), origin.clone());
+    }
+    if let Some(origin) = &message.voice_origin {
+        meta_obj.insert("voiceOrigin".into(), origin.clone());
     }
     if let Some(steering) = message.steering {
         meta_obj.insert("steering".into(), json!(steering));
@@ -298,17 +334,7 @@ pub(crate) fn ui_to_record(message: &UiMessage) -> (MessageRecord, Option<String
         meta_obj.insert("providerId".into(), json!(provider_id));
     }
     if let Some(usage) = &message.usage {
-        meta_obj.insert(
-            "usage".into(),
-            json!({
-                "inputTokens": usage.input_tokens,
-                "outputTokens": usage.output_tokens,
-                "cacheReadTokens": usage.cache_read_tokens,
-                "cacheWriteTokens": usage.cache_write_tokens,
-                "reasoningTokens": usage.reasoning_tokens,
-                "totalTokens": usage.total_tokens,
-            }),
-        );
+        meta_obj.insert("usage".into(), json!(usage));
     }
     if let Some(duration) = message.response_duration_ms {
         meta_obj.insert("responseDurationMs".into(), json!(duration));
@@ -330,6 +356,9 @@ pub(crate) fn ui_to_record(message: &UiMessage) -> (MessageRecord, Option<String
     }
     if let Some(parent) = &message.parent_tool_call_id {
         meta_obj.insert("parentToolCallId".into(), json!(parent));
+    }
+    if let Some(parent) = &message.nested_parent_tool_call_id {
+        meta_obj.insert("nestedParentToolCallId".into(), json!(parent));
     }
     if let Some(agent) = &message.agent_name {
         meta_obj.insert("agentName".into(), json!(agent));
@@ -429,7 +458,15 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
         _ => Vec::new(),
     };
     let meta = record.meta.unwrap_or(Value::Null);
+    let command = meta
+        .get("command")
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let skill_mentions = meta
+        .get("skillMentions")
+        .and_then(|value| serde_json::from_value(value.clone()).ok());
     let session_message = meta.get("sessionMessage").cloned();
+    let voice_origin = meta.get("voiceOrigin").cloned();
     let steering = meta.get("steering").and_then(Value::as_bool);
     let status = meta
         .get("status")
@@ -457,6 +494,22 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             cache_write_tokens: value.get("cacheWriteTokens").and_then(|v| v.as_i64()),
             reasoning_tokens: value.get("reasoningTokens").and_then(|v| v.as_i64()),
             total_tokens,
+            accounting: value
+                .as_object()?
+                .iter()
+                .filter(|(key, _)| {
+                    !matches!(
+                        key.as_str(),
+                        "inputTokens"
+                            | "outputTokens"
+                            | "cacheReadTokens"
+                            | "cacheWriteTokens"
+                            | "reasoningTokens"
+                            | "totalTokens"
+                    )
+                })
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
         })
     });
     let error = meta.get("error").cloned();
@@ -472,6 +525,10 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
         .get("parentToolCallId")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
+    let nested_parent_tool_call_id = meta
+        .get("nestedParentToolCallId")
+        .and_then(Value::as_str)
+        .map(str::to_string);
     let agent_name = meta
         .get("agentName")
         .and_then(|v| v.as_str())
@@ -531,7 +588,10 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             id: record.id,
             role: record.role,
             content: text,
+            command: command.clone(),
+            skill_mentions: skill_mentions.clone(),
             session_message,
+            voice_origin: voice_origin.clone(),
             attachments: None,
             steering,
             created_at: record.created_at,
@@ -564,6 +624,7 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             tool_duration_ms: block.get("durationMs").and_then(|v| v.as_i64()),
             is_error,
             parent_tool_call_id,
+            nested_parent_tool_call_id,
             agent_name,
             hosted_search: hosted_search.clone(),
         }
@@ -580,7 +641,10 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             id: record.id,
             role: record.role,
             content,
+            command,
+            skill_mentions,
             session_message,
+            voice_origin,
             attachments,
             steering,
             created_at: record.created_at,
@@ -604,6 +668,7 @@ pub(crate) fn record_to_ui(record: MessageRecord) -> UiMessage {
             tool_duration_ms: None,
             is_error,
             parent_tool_call_id,
+            nested_parent_tool_call_id,
             agent_name,
             hosted_search,
         }
@@ -1481,8 +1546,9 @@ pub fn get_session_with_options(
 }
 
 /// Create an independent session from the source session's current canonical
-/// transcript. Regenerate revisions, turns, artifacts, notifications, scratch
-/// data, and live runtime state are intentionally not copied.
+/// transcript and referenced pasted inputs. Regenerate revisions, turns,
+/// artifacts, notifications, other scratch data, and live runtime state are
+/// intentionally not copied.
 pub enum ForkSessionResult {
     Created(Box<SessionDetail>),
     NotFound,
@@ -1492,8 +1558,8 @@ pub enum ForkSessionResult {
 /// Whether the session currently owns a running turn.
 ///
 /// A running turn owns its project's instructions, tools, and working
-/// directory, so an operation that crosses that boundary (fork, move, or the
-/// bulk delete of a project) is refused for as long as the turn lasts.
+/// directory, so moving or deleting that project is refused while it runs.
+/// A fork may copy a completed prefix without touching that live ownership.
 pub fn session_has_running_turn(db: &Database, id: &str) -> Result<bool> {
     let running: bool = db.conn().query_row(
         "SELECT EXISTS(
@@ -1518,33 +1584,80 @@ pub fn fork_session_through(
     let Some(source) = get_session(db, source_id)? else {
         return Ok(ForkSessionResult::NotFound);
     };
-    if session_has_running_turn(db, source_id)? {
+    let running = session_has_running_turn(db, source_id)?;
+    let anchor = through_message_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty());
+    if running && anchor.is_none() {
         return Ok(ForkSessionResult::Busy);
     }
     let mut source_records =
         dedupe_records(transcripts::read_transcript(db.data_dir(), source_id)?);
-    if let Some(message_id) = through_message_id
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
+    if let Some(message_id) = anchor {
         let Some(position) = source_records
             .iter()
             .position(|record| record.id == message_id)
         else {
             return Ok(ForkSessionResult::NotFound);
         };
+        if running {
+            let record = &source_records[position];
+            // An assistant message can be complete while its tool loop is still
+            // running. Reject any prefix containing rows owned by a live turn,
+            // not merely a streaming anchor. The RPC holds the host state lock
+            // across this check and publication, including transcript appends.
+            let settled_prefix: bool = db.conn().query_row(
+                "SELECT EXISTS (
+                    SELECT 1 FROM messages anchor
+                    WHERE anchor.session_id = ?1 AND anchor.id = ?2
+                    AND NOT EXISTS (
+                        SELECT 1 FROM messages m JOIN turns t ON t.id = m.turn_id
+                        WHERE m.session_id = ?1 AND t.status = 'running'
+                          AND m.seq <= anchor.seq
+                    )
+                 )",
+                params![source_id, message_id],
+                |row| row.get(0),
+            )?;
+            if record.role != "assistant"
+                || record.is_error
+                || !matches!(
+                    record
+                        .meta
+                        .as_ref()
+                        .and_then(|meta| meta.get("status"))
+                        .and_then(Value::as_str),
+                    None | Some("complete")
+                )
+                || record
+                    .meta
+                    .as_ref()
+                    .and_then(|meta| meta.get("error"))
+                    .is_some_and(|error| !error.is_null())
+                || !settled_prefix
+            {
+                return Ok(ForkSessionResult::Busy);
+            }
+        }
         source_records.truncate(position + 1);
     }
     let source_compactions = transcripts::read_compactions(db.data_dir(), source_id)?;
-    let (records, message_ids, tool_call_ids) = clone_records_for_fork(source_records);
+    let (mut records, message_ids, tool_call_ids) = clone_records_for_fork(source_records);
     // Each checkpoint is remapped on its own: a message-scoped fork can cut the
     // anchor of a later checkpoint while the earlier ones stay intact.
-    let compactions: Vec<CompactionRecord> = source_compactions
+    let mut compactions: Vec<CompactionRecord> = source_compactions
         .into_iter()
         .filter_map(|record| clone_compaction_for_fork(record, &message_ids, &tool_call_ids))
         .collect();
-    let texts = records.iter().map(record_index_text).collect::<Vec<_>>();
     let id = Uuid::new_v4().to_string();
+    let files = fork_files::preserve(
+        db.data_dir(),
+        source_id,
+        &id,
+        &mut records,
+        &mut compactions,
+    )?;
+    let texts = records.iter().map(record_index_text).collect::<Vec<_>>();
     let now = now_ms();
     let created_at = ms_to_ts(now);
     let requested_title = title.map(str::trim).filter(|value| !value.is_empty());
@@ -1553,13 +1666,16 @@ pub fn fork_session_through(
         .unwrap_or_else(|| format!("{} (branch)", source.summary.title));
 
     invalidate_transcript_layout(&id);
-    transcripts::write_transcript_with_compactions(
+    if let Err(error) = transcripts::write_transcript_with_compactions(
         db.data_dir(),
         &id,
         &created_at,
         &records,
         &compactions,
-    )?;
+    ) {
+        transcripts::remove_session_files(db.data_dir(), &id);
+        return Err(error);
+    }
     let indexed = (|| -> Result<()> {
         let tx = db.conn().unchecked_transaction()?;
         let inserted = tx
@@ -1587,6 +1703,7 @@ pub fn fork_session_through(
         transcripts::remove_session_files(db.data_dir(), &id);
         return Err(error);
     }
+    files.commit();
 
     let summary = SessionSummary {
         id,
@@ -1774,6 +1891,9 @@ pub fn append_message(
     let message = crate::session_collaboration::prepare_append(db, session_id, message, turn_id)?;
     let session_created = ensure_session_for_append(db, session_id)?;
     let (mut record, text) = ui_to_record(&message);
+    let had_turn_reference = turn_id.is_some();
+    let turn_id = valid_turn_reference(db, session_id, turn_id)?;
+    let stale_turn_reference = had_turn_reference && turn_id.is_none();
     // Electron may replay an outbox entry after a host restart. Message ids
     // are globally unique, so an existing row in this session is already the
     // durable result. Provider toolCallIds are not globally unique: a collision
@@ -1815,14 +1935,18 @@ pub fn append_message(
                 return Ok(());
             }
         }
-        append_record(
-            db,
-            session_id,
-            &session_created,
-            &record,
-            text.as_deref(),
-            turn_id,
-        )?;
+        let transcript_repaired =
+            stale_turn_reference && repair_unindexed_transcript_message(db, session_id, &record)?;
+        if !transcript_repaired {
+            append_record(
+                db,
+                session_id,
+                &session_created,
+                &record,
+                text.as_deref(),
+                turn_id.as_deref(),
+            )?;
+        }
     }
     if message.role == "assistant" && message.status.as_deref() == Some("streaming") {
         // Even an empty reservation needs a checkpoint so a crash can settle
@@ -1837,8 +1961,8 @@ pub fn append_message(
                 &transcripts::InflightRecord {
                     schema: transcripts::INFLIGHT_SCHEMA,
                     session_id: session_id.to_string(),
-                    turn_id: turn_id.map(str::to_string),
                     saved_at: ms_to_ts(now_ms()),
+                    turn_id: turn_id.clone(),
                     message: record,
                 },
             )?;
@@ -1892,6 +2016,116 @@ fn transcript_contains_id(db: &Database, session_id: &str, message_id: &str) -> 
     Ok(transcripts::read_transcript(db.data_dir(), session_id)?
         .iter()
         .any(|record| record.id == message_id))
+}
+
+fn valid_turn_reference(
+    db: &Database,
+    session_id: &str,
+    turn_id: Option<&str>,
+) -> Result<Option<String>> {
+    let Some(turn_id) = turn_id else {
+        return Ok(None);
+    };
+    let owner: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT session_id FROM turns WHERE id = ?1",
+            params![turn_id],
+            |row| row.get(0),
+        )
+        .optional()?;
+    if owner.as_deref() == Some(session_id) {
+        return Ok(Some(turn_id.to_string()));
+    }
+    tracing::warn!(
+        %session_id,
+        %turn_id,
+        turn_session_id = owner.as_deref().unwrap_or("(missing)"),
+        "omitting invalid turn reference from transcript message"
+    );
+    Ok(None)
+}
+
+/// Reconcile an old outbox replay whose transcript line landed before its
+/// SQLite index insert failed. Keep the file as source of truth and restore
+/// index sequence from its keep-last, unique-message projection.
+fn repair_unindexed_transcript_message(
+    db: &Database,
+    session_id: &str,
+    record: &MessageRecord,
+) -> Result<bool> {
+    let mut records = dedupe_records(transcripts::read_transcript(db.data_dir(), session_id)?);
+    let Some(position) = records.iter().position(|existing| existing.id == record.id) else {
+        return Ok(false);
+    };
+    if !transcripts::update_message(db.data_dir(), session_id, record)? {
+        return Ok(false);
+    }
+    records[position] = record.clone();
+    invalidate_transcript_layout(session_id);
+    rebuild_session_message_index(db, session_id, &records)?;
+    tracing::warn!(
+        %session_id,
+        message_id = %record.id,
+        "reconciled transcript message after an unindexed outbox replay"
+    );
+    Ok(true)
+}
+
+fn rebuild_session_message_index(
+    db: &Database,
+    session_id: &str,
+    records: &[MessageRecord],
+) -> Result<()> {
+    let existing_turns: std::collections::HashMap<String, String> = {
+        let mut stmt = db.conn().prepare_cached(
+            "SELECT m.id, m.turn_id, t.session_id
+             FROM messages m JOIN turns t ON t.id = m.turn_id
+             WHERE m.session_id = ?1 AND m.turn_id IS NOT NULL",
+        )?;
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut turns = std::collections::HashMap::new();
+        for row in rows {
+            let (message_id, turn_id, turn_session_id) = row?;
+            if turn_session_id == session_id {
+                turns.insert(message_id, turn_id);
+            }
+        }
+        turns
+    };
+    let last_seq = i64::try_from(records.len())
+        .map_err(|_| anyhow!("transcript has too many messages to index"))?;
+    let conn = db.conn();
+    let tx = conn.unchecked_transaction()?;
+    tx.prepare_cached("DELETE FROM messages WHERE session_id = ?1")?
+        .execute(params![session_id])?;
+    for (seq, record) in records.iter().enumerate() {
+        let seq =
+            i64::try_from(seq).map_err(|_| anyhow!("transcript has too many messages to index"))?;
+        let text = record_index_text(record);
+        insert_index_row(
+            &tx,
+            session_id,
+            seq,
+            existing_turns.get(&record.id).map(String::as_str),
+            record,
+            text.as_deref(),
+        )?;
+    }
+    let changed = tx
+        .prepare_cached("UPDATE sessions SET last_seq = ?1, updated_at = ?2 WHERE id = ?3")?
+        .execute(params![last_seq, now_ms(), session_id])?;
+    if changed == 0 {
+        return Err(anyhow!("session not found while rebuilding message index"));
+    }
+    tx.commit()?;
+    Ok(())
 }
 
 fn streaming_assistant_indexed(db: &Database, session_id: &str, message_id: &str) -> Result<bool> {
@@ -3247,6 +3481,21 @@ pub fn end_turn_settling(
         "completed" | "aborted" | "error" => status,
         _ => "completed",
     };
+    let existing_usage: Option<String> = db
+        .conn()
+        .query_row(
+            "SELECT usage_json FROM turns WHERE id = ?1",
+            params![turn_id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten();
+    let existing_usage = existing_usage
+        .as_deref()
+        .map(serde_json::from_str::<Value>)
+        .transpose()?;
+    let merged_usage = usage.map(|next| usage::merge_usage(existing_usage.as_ref(), next));
+    let usage = merged_usage.as_ref().or(existing_usage.as_ref());
     let input_tokens = usage
         .and_then(|u| u.get("inputTokens"))
         .and_then(|v| v.as_i64());
@@ -3276,6 +3525,19 @@ pub fn end_turn_settling(
             usage.map(|u| u.to_string()),
             turn_id,
         ])?;
+    // A replay after startup recovery may complete accounting for a terminal
+    // turn, but must never change its settled status or emit another notification.
+    if n == 0 && usage.is_some_and(|value| value.get("operations").is_some()) {
+        tx.execute(
+            "UPDATE turns SET input_tokens = ?1, output_tokens = ?2, usage_json = ?3 WHERE id = ?4",
+            params![
+                input_tokens,
+                output_tokens,
+                usage.map(Value::to_string),
+                turn_id
+            ],
+        )?;
+    }
     let notification = if n > 0 && create_notification {
         notifications::insert_for_terminal_turn(&tx, turn_id, status, error_code)?
     } else {
@@ -3652,7 +3914,10 @@ mod tests {
             id: id.into(),
             role: "user".into(),
             content: content.into(),
+            command: None,
+            skill_mentions: None,
             attachments: None,
+            voice_origin: None,
             steering: None,
             created_at: ts.into(),
             thinking: None,
@@ -3675,6 +3940,7 @@ mod tests {
             tool_duration_ms: None,
             is_error: None,
             parent_tool_call_id: None,
+            nested_parent_tool_call_id: None,
             agent_name: None,
             hosted_search: None,
             session_message: None,
@@ -3699,6 +3965,139 @@ mod tests {
             model_id: Some("model-1".into()),
             created_at: "2026-07-28T00:00:03Z".into(),
         }
+    }
+
+    #[test]
+    fn append_message_without_a_live_same_session_turn_keeps_the_message() {
+        let db = test_db();
+        let source = create_session(&db, None, None, None, None, None).unwrap();
+        let target = create_session(&db, None, None, None, None, None).unwrap();
+        let source_turn = begin_turn(&db, &source.id, None, None).unwrap();
+        let missing = user_msg("missing-turn-message", "kept", "2026-07-28T00:00:00Z");
+        let cross_session = user_msg(
+            "cross-session-turn-message",
+            "also kept",
+            "2026-07-28T00:00:01Z",
+        );
+
+        append_message(&db, &target.id, &missing, Some("missing-turn"))
+            .expect("a stale optional turn must not block transcript persistence");
+        append_message(&db, &target.id, &cross_session, Some(&source_turn))
+            .expect("a turn owned by another session must not block transcript persistence");
+
+        let links: Vec<(String, Option<String>)> = db
+            .conn()
+            .prepare("SELECT id, turn_id FROM messages WHERE session_id = ?1 ORDER BY seq")
+            .unwrap()
+            .query_map(params![target.id], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            links,
+            vec![(missing.id.clone(), None), (cross_session.id.clone(), None),]
+        );
+        assert_eq!(
+            get_session(&db, &target.id)
+                .unwrap()
+                .unwrap()
+                .messages
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![missing.id.as_str(), cross_session.id.as_str()]
+        );
+    }
+
+    #[test]
+    fn replay_after_a_failed_index_insert_updates_transcript_without_duplicate_or_reordering() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        let turn_id = begin_turn(&db, &session.id, None, None).unwrap();
+        let before = user_msg("before", "before", "2026-07-28T00:00:00Z");
+        let replay = user_msg("replay", "latest replay snapshot", "2026-07-28T00:00:01Z");
+        let old_replay = user_msg("replay", "old failed snapshot", "2026-07-28T00:00:01Z");
+        let after = user_msg("after", "after", "2026-07-28T00:00:02Z");
+        append_message(&db, &session.id, &before, Some(&turn_id)).unwrap();
+
+        // Older hosts wrote the transcript line before the index transaction;
+        // repeated retries could leave multiple stale copies while the index stayed absent.
+        let (record, _) = ui_to_record(&old_replay);
+        let created_at = session_created_at(&db, &session.id).unwrap();
+        transcripts::append_message(db.data_dir(), &session.id, &created_at, &record).unwrap();
+        transcripts::append_message(db.data_dir(), &session.id, &created_at, &record).unwrap();
+        append_message(&db, &session.id, &after, Some(&turn_id)).unwrap();
+
+        append_message(&db, &session.id, &replay, Some("missing-turn"))
+            .expect("replaying an old outbox entry must reconcile the existing transcript line");
+
+        let indexed: Vec<(String, i64, Option<String>)> = db
+            .conn()
+            .prepare("SELECT id, seq, turn_id FROM messages WHERE session_id = ?1 ORDER BY seq")
+            .unwrap()
+            .query_map(params![session.id], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        assert_eq!(
+            indexed,
+            vec![
+                (before.id.clone(), 0, Some(turn_id.clone())),
+                (replay.id.clone(), 1, None),
+                (after.id.clone(), 2, Some(turn_id.clone())),
+            ]
+        );
+        let last_seq: i64 = db
+            .conn()
+            .query_row(
+                "SELECT last_seq FROM sessions WHERE id = ?1",
+                params![session.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(last_seq, 3);
+
+        let transcript = transcripts::read_transcript(db.data_dir(), &session.id).unwrap();
+        assert_eq!(
+            transcript
+                .iter()
+                .filter(|record| record.id == replay.id)
+                .count(),
+            2,
+            "replay updates existing lines but does not append another copy"
+        );
+        let restored = get_session(&db, &session.id).unwrap().unwrap();
+        assert_eq!(
+            restored
+                .messages
+                .iter()
+                .map(|message| message.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![before.id.as_str(), replay.id.as_str(), after.id.as_str()]
+        );
+        assert_eq!(restored.messages[1].content, replay.content);
+        assert_eq!(
+            search_messages(&db, &replay.content, 10)
+                .unwrap()
+                .iter()
+                .map(|hit| hit.message_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![replay.id.as_str()]
+        );
+
+        let next = user_msg("next", "after repair", "2026-07-28T00:00:03Z");
+        append_message(&db, &session.id, &next, Some(&turn_id)).unwrap();
+        let next_seq: i64 = db
+            .conn()
+            .query_row(
+                "SELECT seq FROM messages WHERE session_id = ?1 AND id = ?2",
+                params![session.id, next.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(next_seq, 3);
     }
 
     #[test]
@@ -4163,7 +4562,10 @@ mod tests {
             id: "m2".into(),
             role: "tool".into(),
             content: "ok".into(),
+            command: None,
+            skill_mentions: None,
             attachments: None,
+            voice_origin: None,
             steering: None,
             created_at: "2025-05-01T00:00:02Z".into(),
             thinking: None,
@@ -4186,6 +4588,7 @@ mod tests {
             tool_duration_ms: Some(1_000),
             is_error: None,
             parent_tool_call_id: None,
+            nested_parent_tool_call_id: None,
             agent_name: None,
             hosted_search: None,
             session_message: None,
@@ -4585,6 +4988,79 @@ mod tests {
     }
 
     #[test]
+    fn nested_lineage_roundtrips_independently_of_legacy_task_parent() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        for (id, task, nested) in [
+            ("legacy", Some("task-1"), None),
+            ("nested-root", None, Some("code-root")),
+            ("nested-delegate", Some("task-1"), Some("code-child")),
+        ] {
+            let mut message = user_msg(id, "result", "2026-09-30T00:00:00Z");
+            message.role = "assistant".into();
+            message.parent_tool_call_id = task.map(str::to_owned);
+            message.nested_parent_tool_call_id = nested.map(str::to_owned);
+            append_message(&db, &session.id, &message, None).unwrap();
+        }
+        let detail = get_session(&db, &session.id).unwrap().unwrap();
+        assert_eq!(
+            detail.messages[0].parent_tool_call_id.as_deref(),
+            Some("task-1")
+        );
+        assert_eq!(detail.messages[0].nested_parent_tool_call_id, None);
+        assert_eq!(detail.messages[1].parent_tool_call_id, None);
+        assert_eq!(
+            detail.messages[1].nested_parent_tool_call_id.as_deref(),
+            Some("code-root")
+        );
+        assert_eq!(
+            detail.messages[2].parent_tool_call_id.as_deref(),
+            Some("task-1")
+        );
+        assert_eq!(
+            detail.messages[2].nested_parent_tool_call_id.as_deref(),
+            Some("code-child")
+        );
+    }
+
+    #[test]
+    fn usage_accounting_roundtrips_without_rewriting_legacy_tokens() {
+        let db = test_db();
+        let session = create_session(&db, None, None, None, None, None).unwrap();
+        let fixtures = [
+            json!({"inputTokens": 12, "outputTokens": 3, "totalTokens": 15}),
+            json!({
+                "inputTokens": 12, "outputTokens": 3, "totalTokens": 15,
+                "operationId": "request-1", "usageOrigin": "pi",
+                "providerId": "physical-account", "modelId": "physical-model",
+                "costStatus": "reported", "aggregation": "operation",
+                "cost": {"input": 0.12, "output": 0.03, "cacheRead": 0, "cacheWrite": 0, "total": 0.15}
+            }),
+            json!({
+                "inputTokens": 12, "outputTokens": 3, "totalTokens": 15,
+                "costStatus": "unknown", "aggregation": "aggregate",
+                "operations": [
+                    {"operationId": "child-1", "usageOrigin": "pi", "inputTokens": 10, "outputTokens": 2, "totalTokens": 12, "costStatus": "unknown"},
+                    {"operationId": "classifier-1", "usageOrigin": "pi", "inputTokens": 2, "outputTokens": 1, "totalTokens": 3, "costStatus": "estimated", "cost": {"input": 0.2, "output": 0.1, "cacheRead": 0, "cacheWrite": 0, "total": 0.3}}
+                ]
+            }),
+        ];
+        for (index, usage) in fixtures.iter().enumerate() {
+            let mut message = user_msg(&format!("usage-{index}"), "answer", "2026-09-30T00:00:00Z");
+            message.role = "assistant".into();
+            message.usage = Some(serde_json::from_value(usage.clone()).unwrap());
+            append_message(&db, &session.id, &message, None).unwrap();
+            // Replayed message_end replaces a row; it must not duplicate usage.
+            append_message(&db, &session.id, &message, None).unwrap();
+        }
+        let detail = get_session(&db, &session.id).unwrap().unwrap();
+        assert_eq!(detail.messages.len(), fixtures.len());
+        for (message, expected) in detail.messages.iter().zip(fixtures) {
+            assert_eq!(json!(message.usage), expected);
+        }
+    }
+
+    #[test]
     fn assistant_thinking_roundtrips_as_canonical_blocks() {
         let db = test_db();
         let session = create_session(&db, None, None, None, None, None).unwrap();
@@ -4592,7 +5068,10 @@ mod tests {
             id: "assistant-1".into(),
             role: "assistant".into(),
             content: "final answer".into(),
+            command: None,
+            skill_mentions: None,
             attachments: None,
+            voice_origin: None,
             steering: None,
             created_at: "2025-05-01T00:00:01Z".into(),
             thinking: Some("first plan\nsecond plan".into()),
@@ -4606,6 +5085,7 @@ mod tests {
                 cache_write_tokens: None,
                 reasoning_tokens: Some(5),
                 total_tokens: 48,
+                accounting: serde_json::Map::new(),
             }),
             response_duration_ms: Some(2_000),
             response_output_tokens: Some(34),
@@ -4622,6 +5102,7 @@ mod tests {
             tool_duration_ms: None,
             is_error: None,
             parent_tool_call_id: None,
+            nested_parent_tool_call_id: None,
             agent_name: None,
             hosted_search: None,
             session_message: None,
@@ -4675,7 +5156,10 @@ mod tests {
             id: "assistant-search-1".into(),
             role: "assistant".into(),
             content: "answer with sources".into(),
+            command: None,
+            skill_mentions: None,
             attachments: None,
+            voice_origin: None,
             steering: None,
             created_at: "2025-05-01T00:00:01Z".into(),
             thinking: None,
@@ -4698,6 +5182,7 @@ mod tests {
             tool_duration_ms: None,
             is_error: None,
             parent_tool_call_id: None,
+            nested_parent_tool_call_id: None,
             agent_name: None,
             hosted_search: Some(json!({
                 "status": "completed",
@@ -5035,6 +5520,134 @@ mod tests {
     }
 
     #[test]
+    fn fork_index_failure_removes_copied_inputs_and_transcript() {
+        let db = test_db();
+        let source = create_session(&db, None, None, None, None, None).unwrap();
+        let pasted = crate::scratch::session_dir(db.data_dir(), &source.id)
+            .unwrap()
+            .join("pasted");
+        std::fs::create_dir_all(&pasted).unwrap();
+        let file = pasted.join("note.txt");
+        std::fs::write(&file, "keep source").unwrap();
+        append_message(
+            &db,
+            &source.id,
+            &user_msg(
+                "input",
+                &format!("@{}", file.display()),
+                "2025-05-01T00:00:00Z",
+            ),
+            None,
+        )
+        .unwrap();
+        let files_before = std::fs::read_dir(db.data_dir().join("sessions"))
+            .unwrap()
+            .count();
+        db.conn().execute_batch("CREATE TRIGGER fail_fork BEFORE INSERT ON sessions BEGIN SELECT RAISE(ABORT, 'injected index failure'); END;").unwrap();
+        let result = fork_session_through(&db, &source.id, None, None);
+        assert!(result.is_err());
+        assert_eq!(
+            std::fs::read_dir(db.data_dir().join("sessions"))
+                .unwrap()
+                .count(),
+            files_before
+        );
+        assert_eq!(
+            std::fs::read_dir(crate::scratch::base_dir(db.data_dir()))
+                .unwrap()
+                .count(),
+            1
+        );
+        assert_eq!(std::fs::read_to_string(file).unwrap(), "keep source");
+    }
+
+    #[test]
+    fn fork_preserves_referenced_pasted_files_independently() {
+        let db = test_db();
+        let source =
+            create_session(&db, Some("Attachments".into()), None, None, None, None).unwrap();
+        let scratch = crate::scratch::session_dir(db.data_dir(), &source.id).unwrap();
+        let pasted = scratch.join("pasted");
+        std::fs::create_dir_all(&pasted).unwrap();
+        let first = pasted.join("first note.txt");
+        let later = pasted.join("later.png");
+        std::fs::write(&first, "original reference bytes").unwrap();
+        std::fs::write(&later, b"image bytes").unwrap();
+        std::fs::write(pasted.join("unused.txt"), "do not copy").unwrap();
+        let first_text = format!("Read @\"{}\"", first.display());
+        append_message(
+            &db,
+            &source.id,
+            &user_msg("paste-1", &first_text, "2025-05-01T00:00:00Z"),
+            None,
+        )
+        .unwrap();
+        append_message(
+            &db,
+            &source.id,
+            &user_msg(
+                "paste-2",
+                &format!("@{}", later.display()),
+                "2025-05-01T00:00:01Z",
+            ),
+            None,
+        )
+        .unwrap();
+        let ForkSessionResult::Created(child) =
+            fork_session_through(&db, &source.id, None, Some("paste-1")).unwrap()
+        else {
+            panic!("expected child")
+        };
+        let child_scratch = crate::scratch::session_dir(db.data_dir(), &child.summary.id).unwrap();
+        let child_file = child_scratch.join("pasted").join("first note.txt");
+        assert_eq!(
+            std::fs::read_to_string(&child_file).unwrap(),
+            "original reference bytes"
+        );
+        assert_eq!(
+            child.messages[0].content,
+            format!("Read @\"{}\"", child_file.display())
+        );
+        assert!(!child_scratch.join("pasted/later.png").exists());
+        assert!(!child_scratch.join("pasted/unused.txt").exists());
+        assert_eq!(
+            get_session(&db, &source.id).unwrap().unwrap().messages[0].content,
+            first_text
+        );
+        delete_session(&db, &source.id).unwrap();
+        crate::scratch::remove_session_dir(db.data_dir(), &source.id);
+        assert_eq!(
+            std::fs::read_to_string(&child_file).unwrap(),
+            "original reference bytes"
+        );
+        assert_eq!(
+            get_session(&db, &child.summary.id)
+                .unwrap()
+                .unwrap()
+                .messages[0]
+                .content,
+            child.messages[0].content
+        );
+        let ForkSessionResult::Created(grandchild) =
+            fork_session_through(&db, &child.summary.id, None, None).unwrap()
+        else {
+            panic!("expected grandchild")
+        };
+        let grandchild_file = crate::scratch::session_dir(db.data_dir(), &grandchild.summary.id)
+            .unwrap()
+            .join("pasted")
+            .join("first note.txt");
+        assert_eq!(
+            std::fs::read_to_string(&grandchild_file).unwrap(),
+            "original reference bytes"
+        );
+        assert_eq!(
+            grandchild.messages[0].content,
+            format!("Read @\"{}\"", grandchild_file.display())
+        );
+    }
+
+    #[test]
     fn fork_session_clones_active_transcript_and_configuration() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("pi.sqlite");
@@ -5173,6 +5786,107 @@ mod tests {
                 .len(),
             3
         );
+    }
+
+    #[test]
+    fn completed_reply_fork_during_later_turn_preserves_the_running_source() {
+        let db = test_db();
+        let source = create_session(&db, Some("Source".into()), None, None, None, None).unwrap();
+        let first = begin_turn(&db, &source.id, None, None).unwrap();
+        let mut reply = user_msg("reply", "finished reply", "2025-05-01T00:00:01Z");
+        reply.role = "assistant".into();
+        append_message(
+            &db,
+            &source.id,
+            &user_msg("first", "first prompt", "2025-05-01T00:00:00Z"),
+            Some(&first),
+        )
+        .unwrap();
+        append_message(&db, &source.id, &reply, Some(&first)).unwrap();
+        end_turn(&db, &first, "completed", None, None, false).unwrap();
+        let running = begin_turn(&db, &source.id, None, None).unwrap();
+        // Admission can precede persistence of the next user row.
+        let ForkSessionResult::Created(early) =
+            fork_session_through(&db, &source.id, None, Some("reply")).unwrap()
+        else {
+            panic!("completed history should fork during a later turn");
+        };
+        assert_eq!(early.messages.len(), 2);
+        append_message(
+            &db,
+            &source.id,
+            &user_msg("second", "second prompt", "2025-05-01T00:00:02Z"),
+            Some(&running),
+        )
+        .unwrap();
+        let mut current = reply.clone();
+        current.id = "current".into();
+        current.content = "intermediate completed response in a running tool loop".into();
+        append_message(&db, &source.id, &current, Some(&running)).unwrap();
+        let before = get_session(&db, &source.id).unwrap().unwrap();
+        let ForkSessionResult::Created(child) =
+            fork_session_through(&db, &source.id, None, Some("reply")).unwrap()
+        else {
+            panic!("completed history should fork while the source streams");
+        };
+        assert_eq!(child.messages.len(), 2);
+        assert_eq!(child.messages[1].content, "finished reply");
+        assert_ne!(child.messages[1].id, "reply");
+        assert!(session_has_running_turn(&db, &source.id).unwrap());
+        assert!(!session_has_running_turn(&db, &child.summary.id).unwrap());
+        assert_eq!(
+            get_session(&db, &source.id)
+                .unwrap()
+                .unwrap()
+                .messages
+                .len(),
+            before.messages.len()
+        );
+        for anchor in [
+            None,
+            Some(""),
+            Some("first"),
+            Some("second"),
+            Some("current"),
+        ] {
+            assert!(matches!(
+                fork_session_through(&db, &source.id, None, anchor).unwrap(),
+                ForkSessionResult::Busy
+            ));
+        }
+        assert!(matches!(
+            fork_session_through(&db, &source.id, None, Some("missing")).unwrap(),
+            ForkSessionResult::NotFound
+        ));
+        // The original turn can still finish after the child was published.
+        current.id = "final".into();
+        current.content = "source finished independently".into();
+        append_message(&db, &source.id, &current, Some(&running)).unwrap();
+        end_turn(&db, &running, "completed", None, None, false).unwrap();
+        assert_eq!(
+            get_session(&db, &source.id)
+                .unwrap()
+                .unwrap()
+                .messages
+                .len(),
+            5
+        );
+        assert_eq!(
+            get_session(&db, &child.summary.id)
+                .unwrap()
+                .unwrap()
+                .messages
+                .len(),
+            2
+        );
+        // A child has no copied turn ids, but its completed history remains forkable.
+        let child_turn = begin_turn(&db, &child.summary.id, None, None).unwrap();
+        assert!(matches!(
+            fork_session_through(&db, &child.summary.id, None, Some(&child.messages[1].id))
+                .unwrap(),
+            ForkSessionResult::Created(_)
+        ));
+        end_turn(&db, &child_turn, "aborted", None, None, false).unwrap();
     }
 
     #[test]

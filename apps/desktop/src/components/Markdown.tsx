@@ -17,12 +17,14 @@ import {
   type ReactNode,
 } from "react";
 import ReactMarkdown, { type Components, type Options } from "react-markdown";
-import remarkGfm from "remark-gfm";
-import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
 import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
-import { lexer } from "marked";
+import {
+  advanceMarkdownBlocks,
+  emptyMarkdownBlockCache,
+  markdownRemarkPlugins,
+} from "../lib/markdown-blocks";
 import { useTranslation } from "react-i18next";
 import type { ThemedToken } from "shiki";
 import "katex/dist/katex.min.css";
@@ -38,6 +40,11 @@ import {
 } from "./icons";
 import { TooltipButton } from "./ui";
 import { ContextMenu, useContextMenu } from "./ContextMenu";
+import { MarkdownTable } from "./MarkdownTable";
+import { markdownTableData } from "../lib/markdown-table";
+import { PluginBlockRenderer } from "./PluginBlockRenderer";
+import { blockRendererCandidate } from "../lib/block-renderer";
+import { useSlotEntryForKey } from "../plugins/renderer-slots/use-slots";
 import { api } from "../lib/api";
 import { openHttpUrl } from "../lib/open-http-url";
 import {
@@ -51,7 +58,13 @@ import {
 } from "../lib/latex-math";
 import { useAppStore } from "../stores/app-store";
 import { useReferencedImageDataUrl } from "../lib/use-referenced-image-data-url";
+import { absoluteImagePath, remarkLocalImagePaths } from "../lib/markdown-image-paths";
+import { remarkNormalizeWrappedMarkdownLinkDestinations } from "../lib/markdown-link-destinations";
 import { useOpenChatFileRef } from "../hooks/use-preview-target";
+import {
+  useChatFileMenuItems,
+  type ChatFileMenuTarget,
+} from "../hooks/use-chat-file-menu";
 import {
   remarkChatFileLinks,
   resolvePreviewTarget,
@@ -78,10 +91,12 @@ import {
 /*
  * Streaming-optimized chat markdown renderer.
  *
- * The source is split into top-level markdown blocks with marked's lexer and
- * each block renders through a memoized <ReactMarkdown>. While streaming only
- * the tail block's raw text changes, so every settled block skips re-parsing
- * entirely — total work stays linear in message length instead of quadratic.
+ * The source is split with the rendering grammar, and each block renders
+ * through a memoized <ReactMarkdown>. Streaming re-parses the growing tail
+ * while retaining the completed prefix; a long unclosed block still has to
+ * be parsed in full until its boundary is known. A source carrying link or
+ * footnote definitions opts out of splitting altogether — `markdown-blocks`
+ * states why, and why that trade is the right one.
  */
 
 export function useCopy() {
@@ -124,7 +139,7 @@ function getThemeSnapshot(): ThemeMode {
 }
 
 function useThemeMode(): ThemeMode {
-  return useSyncExternalStore(subscribeTheme, getThemeSnapshot);
+  return useSyncExternalStore(subscribeTheme, getThemeSnapshot, getThemeSnapshot);
 }
 
 /* ---------- syntax highlighting ---------- */
@@ -159,7 +174,11 @@ function useHighlightedTokens(
 ): ThemedToken[][] | null {
   const resolved = resolveLang(lang);
   const mode = useThemeMode();
-  const version = useSyncExternalStore(subscribeHighlighter, getHighlightVersion);
+  const version = useSyncExternalStore(
+    subscribeHighlighter,
+    getHighlightVersion,
+    getHighlightVersion,
+  );
   useEffect(() => {
     if (resolved) ensureLang(resolved);
   }, [resolved]);
@@ -395,9 +414,26 @@ function MermaidBlock({ code, ...position }: { code: string } & SourcePositionPr
 const MarkdownBlockContext = createContext({
   closedFence: false,
   renderDiagrams: true,
+  originalRaw: "",
 });
 
 const MarkdownBaseDirContext = createContext("");
+
+/**
+ * File references inside one rendered markdown tree share a single menu.
+ *
+ * A chip, a link and a local image all name files the same way and offer the
+ * same items (`useChatFileMenuItems`), so the tree owns one surface instead of
+ * one per reference. The default is `null` for a tree rendered outside
+ * `Markdown`; a reference there keeps the platform's own menu rather than
+ * offering an action that could not run.
+ */
+const MarkdownFileMenuContext = createContext<OpenMarkdownFileMenu | null>(null);
+
+type OpenMarkdownFileMenu = (
+  event: React.MouseEvent<HTMLElement>,
+  target: ChatFileMenuTarget,
+) => void;
 
 function extractCode(children: ReactNode): { code: string; lang: string } | null {
   const element = Array.isArray(children)
@@ -425,6 +461,12 @@ function PreBlock({
 }: ComponentProps<"pre"> & SourcePositionProps & { node?: unknown }) {
   const { closedFence, renderDiagrams } = useContext(MarkdownBlockContext);
   const info = extractCode(children);
+  // Hooks stay unconditional: the fence language and closed-ness can flip
+  // between streaming renders, so the lookup must run on every render.
+  const blockEntry = useSlotEntryForKey(
+    "blockRenderer",
+    closedFence ? blockRendererCandidate(info?.lang ?? "") : undefined,
+  );
   if (!info) return <pre {...rest}>{children}</pre>;
   if (
     renderDiagrams &&
@@ -432,6 +474,20 @@ function PreBlock({
     info.lang.toLowerCase() === "mermaid"
   ) {
     return <MermaidBlock code={info.code} {...sourcePositionProps(rest)} />;
+  }
+  if (blockEntry) {
+    return (
+      <PluginBlockRenderer
+        key={blockEntry.id}
+        entry={blockEntry}
+        language={info.lang}
+        source={info.code}
+        sourcePosition={sourcePositionProps(rest)}
+        fallback={
+          <CodeBlock code={info.code} lang={info.lang} {...sourcePositionProps(rest)} />
+        }
+      />
+    );
   }
   return <CodeBlock code={info.code} lang={info.lang} {...sourcePositionProps(rest)} />;
 }
@@ -456,6 +512,7 @@ function InlineCode({
   const root = useAppStore((s) => s.workspace?.path);
   const baseDir = useContext(MarkdownBaseDirContext);
   const openFileRef = useOpenChatFileRef();
+  const openFileMenu = useContext(MarkdownFileMenuContext);
   const text = typeof children === "string" ? children : null;
   const target =
     text && !className && !text.includes("\n")
@@ -480,6 +537,12 @@ function InlineCode({
           ? openFileRef(text ?? target.path, baseDir)
           : openHttpUrl(target.url)
       }
+      onContextMenu={
+        target.kind === "file" && openFileMenu
+          ? (event) =>
+              openFileMenu(event, { path: text ?? target.path, baseDir })
+          : undefined
+      }
     >
       <code className={className} {...rest}>
         {children}
@@ -498,6 +561,7 @@ function Anchor({
   const root = useAppStore((s) => s.workspace?.path);
   const baseDir = useContext(MarkdownBaseDirContext);
   const openFileRef = useOpenChatFileRef();
+  const openFileMenu = useContext(MarkdownFileMenuContext);
   const openUrl = useAppStore((s) => s.openUrlInWorkPanel);
   const showToast = useAppStore((s) => s.showToast);
 
@@ -526,10 +590,24 @@ function Anchor({
     destinations the app can send it to stay one press away. The surface is the
     shared pointer-anchored menu, which measures before it reveals, clamps inside
     the viewport, and owns dismissal and arrow-key navigation; only the items are
-    link-specific.
+    link-specific. A file link has one destination of its own, and that item is
+    the one the tree's menu already carries.
   */
   const onContextMenu = (event: React.MouseEvent<HTMLAnchorElement>) => {
-    if (!href || !/^https?:\/\//i.test(href)) return;
+    if (!href) return;
+    if (!/^https?:\/\//i.test(href)) {
+      /*
+        A file link names the same reference a chip does, so it offers the same
+        action on the file's folder. `./` and `../` resolve against the markdown
+        file on screen, which is the base this row already holds.
+      */
+      const decoded = safeDecodeUri(href);
+      const target = resolvePreviewTarget(decoded, root, baseDir);
+      const ref = target?.kind === "file" ? target.path : toWorkspaceRel(decoded, root, baseDir);
+      if (!ref || !openFileMenu) return;
+      openFileMenu(event, { path: ref, baseDir });
+      return;
+    }
     const target = href;
     openContextMenu(event, {
       items: [
@@ -573,10 +651,12 @@ function Anchor({
       openHttpUrl(href);
       return;
     }
-    const rel = toWorkspaceRel(safeDecodeUri(href), root, baseDir);
-    if (rel) {
+    const decoded = safeDecodeUri(href);
+    const target = resolvePreviewTarget(decoded, root, baseDir);
+    const ref = target?.kind === "file" ? target.path : toWorkspaceRel(decoded, root, baseDir);
+    if (ref) {
       e.preventDefault();
-      openFileRef(rel, baseDir);
+      openFileRef(ref, baseDir);
     }
   };
   return (
@@ -611,6 +691,7 @@ function MarkdownImage({
   const root = useAppStore((s) => s.workspace?.path);
   const baseDir = useContext(MarkdownBaseDirContext);
   const openFileRef = useOpenChatFileRef();
+  const openFileMenu = useContext(MarkdownFileMenuContext);
   const fileTitle = usePreviewTitle("file");
   const urlTitle = usePreviewTitle("url");
   const source = typeof src === "string" ? src : "";
@@ -621,10 +702,20 @@ function MarkdownImage({
     !isRemote && /^attachments\/[0-9a-f]{64}$/i.test(decoded.replace(/\\/g, "/"))
       ? decoded.replace(/\\/g, "/")
       : null;
-  const localRef = rel ?? attachmentRef;
+  const localRef = (isRemote ? null : absoluteImagePath(source)) ?? rel ?? attachmentRef;
   // Always run the hook before any branch so hook order stays stable when a
   // streaming src flips between remote and local. Remote images pass null.
   const dataUrl = useReferencedImageDataUrl(isRemote ? null : localRef);
+
+  /*
+    A file the renderer can already show is still a file whose folder the user
+    may want, so a local image carries the same menu its chip fallback does.
+  */
+  const onLocalContextMenu =
+    localRef && openFileMenu
+      ? (event: React.MouseEvent<HTMLElement>) =>
+          openFileMenu(event, { path: localRef, baseDir })
+      : undefined;
   if (isRemote) {
     return (
       <img
@@ -646,6 +737,7 @@ function MarkdownImage({
         className="chat-image-local"
         title={rel ? fileTitle : source}
         onClick={localRef ? () => openFileRef(localRef, baseDir) : undefined}
+        onContextMenu={onLocalContextMenu}
       />
     );
   }
@@ -657,6 +749,7 @@ function MarkdownImage({
         {...sourcePositionProps(rest)}
         title={fileTitle}
         onClick={() => openFileRef(localRef, baseDir)}
+        onContextMenu={onLocalContextMenu}
       >
         <IconImage size={14} aria-hidden />
         <span>{alt || localRef.split("/").pop()}</span>
@@ -667,15 +760,21 @@ function MarkdownImage({
 }
 
 function Table({
-  node: _node,
+  node,
   children,
   ...rest
-}: ComponentProps<"table"> & { node?: unknown }) {
-  return (
+}: ComponentProps<"table"> & { node?: Parameters<typeof markdownTableData>[0] }) {
+  const { originalRaw } = useContext(MarkdownBlockContext);
+  const data = useMemo(
+    () => node ? markdownTableData(node, originalRaw) : null,
+    [node, originalRaw],
+  );
+  const table = (
     <div className="table-wrap">
       <table {...rest}>{children}</table>
     </div>
   );
+  return data ? <MarkdownTable {...data}>{table}</MarkdownTable> : table;
 }
 
 /** Inline audio player for audio URLs in markdown. */
@@ -716,7 +815,14 @@ const markdownComponents: Components = {
   table: Table,
 };
 
-const staticRemarkPlugins = [remarkGfm, remarkMath];
+// The grammar the block splitter parses with, plus the renderer-only rewrite
+// of local image paths. `remarkLocalImagePaths` transforms URLs and moves no
+// block boundary, so the splitter has no reason to run it.
+const staticRemarkPlugins = [
+  ...markdownRemarkPlugins,
+  remarkNormalizeWrappedMarkdownLinkDestinations,
+  remarkLocalImagePaths,
+];
 
 // Extend the default schema only for the media elements rendered above, plus
 // `remark-math`'s math classes on `<code>`: the default `language-*` allow list
@@ -744,58 +850,15 @@ const rehypePlugins = [rehypeRaw, [rehypeSanitize, sanitizeSchema], rehypeKatex]
 
 /* ---------- block splitting ---------- */
 
-function parseBlocks(source: string): string[] {
-  const blocks: string[] = [];
-  let sourceOffset = 0;
-  const hasWindowsLines = source.includes("\r\n");
-  for (const token of lexer(source)) {
-    if (!token.raw) continue;
-    const start = sourceOffset;
-    // Marked normalizes CRLF before tokenizing. Preserve original slices so
-    // parser offsets and incremental block lengths still refer to stored text.
-    if (hasWindowsLines) {
-      for (let i = 0; i < token.raw.length; i++, sourceOffset++) {
-        if (source[sourceOffset] === "\r" && source[sourceOffset + 1] === "\n") sourceOffset++;
-      }
-    } else {
-      sourceOffset += token.raw.length;
-    }
-    const raw = source.slice(start, sourceOffset);
-    // Fold blank-line runs into the previous block so joining blocks
-    // reconstructs the source and block boundaries stay append-stable.
-    if (token.type === "space" && blocks.length > 0) {
-      blocks[blocks.length - 1] += raw;
-    } else {
-      blocks.push(raw);
-    }
-  }
-  return blocks;
-}
-
 /*
- * Incremental re-lex: while streaming appends text, all blocks before the
- * last are settled (markdown blocks never merge backwards across a completed
- * boundary), so only the tail block is re-lexed each frame.
+ * Splitting and its streaming reuse live in `markdown-blocks`, which owns the
+ * rules a slice has to satisfy before it can be parsed on its own.
  */
 function useBlocks(source: string): string[] {
-  const cacheRef = useRef({ consumed: "", blocks: [] as string[] });
+  const cacheRef = useRef(emptyMarkdownBlockCache);
   return useMemo(() => {
-    const cache = cacheRef.current;
-    let stable: string[] = [];
-    let tail = source;
-    if (
-      cache.blocks.length > 0 &&
-      source.length >= cache.consumed.length &&
-      source.startsWith(cache.consumed)
-    ) {
-      stable = cache.blocks.slice(0, -1);
-      const lastStart =
-        cache.consumed.length - cache.blocks[cache.blocks.length - 1].length;
-      tail = source.slice(lastStart);
-    }
-    const blocks = tail ? [...stable, ...parseBlocks(tail)] : stable;
-    cacheRef.current = { consumed: source, blocks };
-    return blocks;
+    cacheRef.current = advanceMarkdownBlocks(cacheRef.current, source);
+    return cacheRef.current.blocks;
   }, [source]);
 }
 
@@ -818,8 +881,9 @@ const Block = memo(function MarkdownBlock({
     () => ({
       closedFence: isClosedFencedCodeBlock(raw),
       renderDiagrams,
+      originalRaw,
     }),
-    [raw, renderDiagrams],
+    [raw, originalRaw, renderDiagrams],
   );
   const remarkPlugins = useMemo(
     () => [
@@ -860,15 +924,26 @@ export const Markdown = memo(function Markdown({
   baseDir?: string;
 }) {
   const workspaceRoot = useAppStore((s) => s.workspace?.path);
-  // Normalize once at the source level: marked's block lexer runs on the raw
-  // text and would otherwise split `\[ … \]` display math whose body puts a
-  // lone `=`/`-` (setext underline) or `+`/`*` (list marker) on its own line,
-  // stranding `\[` and `\]` in different blocks so the delimiters escape as
-  // literal `[`/`]`. The normalizer both rewrites the delimiters to `$$` and
-  // flattens newlines inside every paired region, keeping the whole formula
-  // inside a single markdown block. The rewrite is length-preserving, so we
-  // can still slice the original text at the same offsets for downstream
-  // plugins that need the pre-normalized delimiters.
+
+  /*
+    One menu for every file reference in this tree. Its blocks are memoized and
+    rendered through the same component map, so the surface is asked for by the
+    reference the pointer chose and owned here, where it outlives a block that
+    streaming may replace.
+  */
+  const fileMenuItems = useChatFileMenuItems();
+  const {
+    contextMenu: fileMenu,
+    openContextMenu: openFileMenu,
+    closeContextMenu: closeFileMenu,
+  } = useContextMenu();
+  const openMarkdownFileMenu = useCallback<OpenMarkdownFileMenu>(
+    (event, target) => openFileMenu(event, { items: fileMenuItems(target) }),
+    [fileMenuItems, openFileMenu],
+  );
+  // Keep normalization length-preserving so source anchors and the bracket
+  // display plugin still address the original text. Block splitting uses the
+  // same math grammar as rendering, including unclosed streaming math blocks.
   const normalizedSource = useMemo(
     () => normalizeLatexMathDelimiters(source),
     [source],
@@ -876,23 +951,26 @@ export const Markdown = memo(function Markdown({
   const blocks = useBlocks(normalizedSource);
   let sourceOffset = 0;
   return (
-    <MarkdownBaseDirContext.Provider value={baseDir ?? ""}>
-      {blocks.map((raw, i) => {
-        const start = sourceOffset;
-        sourceOffset = start + raw.length;
-        const originalRaw = source.slice(start, start + raw.length);
-        return (
-          <Block
-            key={i}
-            raw={raw}
-            originalRaw={originalRaw}
-            sourceOffset={start}
-            renderDiagrams={renderDiagrams}
-            workspaceRoot={workspaceRoot}
-            baseDir={baseDir}
-          />
-        );
-      })}
-    </MarkdownBaseDirContext.Provider>
+    <MarkdownFileMenuContext.Provider value={openMarkdownFileMenu}>
+      <MarkdownBaseDirContext.Provider value={baseDir ?? ""}>
+        {blocks.map((raw, i) => {
+          const start = sourceOffset;
+          sourceOffset = start + raw.length;
+          const originalRaw = source.slice(start, start + raw.length);
+          return (
+            <Block
+              key={i}
+              raw={raw}
+              originalRaw={originalRaw}
+              sourceOffset={start}
+              renderDiagrams={renderDiagrams}
+              workspaceRoot={workspaceRoot}
+              baseDir={baseDir}
+            />
+          );
+        })}
+      </MarkdownBaseDirContext.Provider>
+      <ContextMenu state={fileMenu} onClose={closeFileMenu} />
+    </MarkdownFileMenuContext.Provider>
   );
 });

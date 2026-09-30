@@ -12,7 +12,7 @@ import {
 } from "@pi-desktop/shared";
 import { api } from "../../lib/api";
 import { resolveContextUsageDisplay } from "../../lib/context-usage";
-import { HelpIcon, Input, cx } from "../../components/ui";
+import { HelpIcon, Input, SegmentedControl } from "../../components/ui";
 import { SettingsMenuSelect } from "../../components/settings/SettingsMenuSelect";
 
 /**
@@ -53,15 +53,20 @@ export function SettingsRow({
 
 /**
  * A titled group of rows. `description` follows the same rule as a row's: it
- * explains the card, so it lives behind the heading's help icon.
+ * explains the card, so it lives behind the heading's help icon. `action` is a
+ * card-level control (for example a link to another Settings destination) and
+ * belongs on the heading line, not among the rows.
  */
 export function SettingsCard({
   title,
   description,
+  action,
   children,
 }: {
   title?: string;
   description?: string;
+  /** Card-level control rendered at the end of the heading line. */
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
@@ -72,9 +77,18 @@ export function SettingsCard({
           button joins the heading's accessible name, and a screen reader's
           list of headings should not read out every explanation.
         */
-        <div className="settings-card-heading-help">
-          <h3 className="settings-card-heading">{title}</h3>
-          {description ? <HelpIcon label={description} /> : null}
+        <div
+          className={
+            action
+              ? "settings-card-heading-row settings-card-heading-with-action"
+              : "settings-card-heading-help"
+          }
+        >
+          <div className="settings-card-heading-help">
+            <h3 className="settings-card-heading">{title}</h3>
+            {description ? <HelpIcon label={description} /> : null}
+          </div>
+          {action}
         </div>
       ) : null}
       <div className="settings-panel">{children}</div>
@@ -227,29 +241,16 @@ export function LinkOpenTargetRow({
   const current = settings.linkOpenTarget ?? "workpanel";
   return (
     <SettingsRow title={t("settings.linkOpenTarget")}>
-      <div
-        className="settings-segment"
+      <SegmentedControl
+        value={current}
+        onChange={(value) => void saveSettings({ linkOpenTarget: value })}
+        options={[
+          { value: "workpanel", label: t("settings.linkOpenTargetWorkpanel") },
+          { value: "external", label: t("settings.linkOpenTargetExternal") },
+        ]}
+        label={t("settings.linkOpenTarget")}
         role="group"
-        aria-label={t("settings.linkOpenTarget")}
-      >
-        {([
-          ["workpanel", "settings.linkOpenTargetWorkpanel"],
-          ["external", "settings.linkOpenTargetExternal"],
-        ] as const).map(([value, labelKey]) => (
-          <button
-            key={value}
-            type="button"
-            className={cx(
-              "settings-segment-item",
-              current === value && "active",
-            )}
-            aria-pressed={current === value}
-            onClick={() => void saveSettings({ linkOpenTarget: value })}
-          >
-            {t(labelKey)}
-          </button>
-        ))}
-      </div>
+      />
     </SettingsRow>
   );
 }
@@ -270,30 +271,15 @@ export function ContextUsageDisplayRow({
   const current = resolveContextUsageDisplay(settings.contextUsageDisplay);
   return (
     <SettingsRow title={t("settings.contextUsageDisplay")}>
-      <div
-        className="settings-segment"
-        role="radiogroup"
-        aria-label={t("settings.contextUsageDisplay")}
-      >
-        {([
-          ["remaining", "settings.contextUsageDisplayRemaining"],
-          ["used", "settings.contextUsageDisplayUsed"],
-        ] as const).map(([value, labelKey]) => (
-          <button
-            key={value}
-            type="button"
-            role="radio"
-            aria-checked={current === value}
-            className={cx(
-              "settings-segment-item",
-              current === value && "active",
-            )}
-            onClick={() => void saveSettings({ contextUsageDisplay: value })}
-          >
-            {t(labelKey)}
-          </button>
-        ))}
-      </div>
+      <SegmentedControl
+        value={current}
+        onChange={(value) => void saveSettings({ contextUsageDisplay: value })}
+        options={[
+          { value: "remaining", label: t("settings.contextUsageDisplayRemaining") },
+          { value: "used", label: t("settings.contextUsageDisplayUsed") },
+        ]}
+        label={t("settings.contextUsageDisplay")}
+      />
     </SettingsRow>
   );
 }

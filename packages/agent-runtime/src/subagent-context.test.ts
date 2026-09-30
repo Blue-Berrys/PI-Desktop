@@ -17,7 +17,7 @@ import {
   buildProviderModel,
   type RuntimeProviderConfig,
 } from "./provider-binding.js";
-import { contextBudgetFor } from "./context-budget.js";
+import { automaticCompactionThresholdFor, contextBudgetFor } from "./context-budget.js";
 import {
   degradedDelegateMessages,
   delegateRetentionMode,
@@ -210,6 +210,63 @@ describe("prepareDelegateTurnContext", () => {
     });
   });
 
+  it("compacts at the shared early trigger before the hard limit", async () => {
+    const taskBrief = "Read the permission flow.";
+    const messages: AgentMessage[] = [
+      userMessage(taskBrief),
+      assistantToolCall("soft-trigger"),
+      toolResult("x".repeat(7_500), "soft-trigger"),
+    ];
+    const budget = contextBudgetFor(smallModel(), messages);
+    const { factory, prompts } = summaryModels(() => summarySuccess("SUMMARY TEXT"));
+
+    expect(budget.tokens).toBeLessThan(budget.hardLimit);
+    expect(budget.tokens).toBeGreaterThanOrEqual(
+      automaticCompactionThresholdFor(budget),
+    );
+    const outcome = await prepareDelegateTurnContext({
+      messages,
+      model: smallModel(),
+      taskBrief,
+      retentionMode: "active_turn",
+      summaryModels: factory,
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome.kind).toBe("compacted");
+    expect(prompts).toHaveLength(1);
+  });
+  it("charges pending task, system prompt, and tool schemas against the budget", async () => {
+    const taskBrief = "Read the permission flow.";
+    const messages: AgentMessage[] = [
+      userMessage(taskBrief),
+      assistantToolCall("call-1"),
+      toolResult("a".repeat(2_300), "call-1"),
+      assistantToolCall("call-2"),
+      toolResult("b".repeat(2_300), "call-2"),
+    ];
+    const baseBudget = contextBudgetFor(smallModel(), messages);
+    expect(baseBudget.tokens).toBeLessThan(
+      automaticCompactionThresholdFor(baseBudget),
+    );
+    const { factory, prompts } = summaryModels(() => summarySuccess("SUMMARY TEXT"));
+
+    const outcome = await prepareDelegateTurnContext({
+      messages,
+      additionalMessages: [userMessage("Continue scanning.")],
+      model: smallModel(),
+      taskBrief,
+      systemPrompt: "s".repeat(2_600),
+      tools: [{ name: "Read", description: "t".repeat(800) }],
+      retentionMode: "active_turn",
+      summaryModels: factory,
+      signal: new AbortController().signal,
+    });
+
+    expect(outcome.kind).toBe("compacted");
+    expect(prompts).toHaveLength(1);
+  });
+
   it("compacts synchronously at the hard limit and retains the task brief of an active turn", async () => {
     const { factory, prompts } = summaryModels(() => summarySuccess("SUMMARY TEXT"));
     const outcome = await prepareDelegateTurnContext({
@@ -353,6 +410,24 @@ describe("prepareDelegateTurnContext", () => {
 });
 
 describe("degradedDelegateMessages", () => {
+  it("charges retained search only when the target adapter replays it", () => {
+    const target: Model<Api> = { ...smallModel(), api: "openai-responses" };
+    const brief = userMessage("Keep the useful answer.");
+    const search: AssistantMessage = {
+      ...assistantText("useful answer"), api: target.api,
+      content: [
+        { type: "hostedSearch", phase: "web_search_call", blockId: "ws", wire: {
+          type: "web_search_call", id: "ws", status: "completed", action: { type: "search", query: "x".repeat(20_000) },
+        } },
+        { type: "text", text: "useful answer" },
+      ],
+    };
+    const messages = [brief, search];
+    expect(degradedDelegateMessages(messages, "brief", target)).toEqual([brief]);
+    expect(degradedDelegateMessages(messages, "brief", { ...target, id: "other-model" })).toEqual(messages);
+    expect(degradedDelegateMessages(messages, "brief", { contextWindow: target.contextWindow, maxTokens: target.maxTokens })).toEqual([brief]);
+  });
+
   it("keeps the brief plus the most recent complete exchanges that still fit", () => {
     const brief = userMessage("Survey the module.");
     const exchange = (id: string, text: string): AgentMessage[] => [

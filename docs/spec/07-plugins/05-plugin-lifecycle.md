@@ -104,15 +104,13 @@ unexpectedly" toast, and a supervisor scheduling restarts into an app that is
 closing. None of that may happen on a clean quit.
 
 **A crash report carries the diagnosis.** The crash path reports the host
-process's exit code and its newest output line, because that is the only
-evidence a user can quote in a bug report: on Windows a hard fault
-(`0xC0000005` and friends, which Electron hands over as a negative signed int)
-and a plugin's own `process.exit(1)` are different bugs, and a plugin that died
-on a thrown error usually printed the reason first. The exit code reaches the
-load error, the `failed` service state, the `plugin.crash` audit record and the
-`plugin` log channel; the newest output line (the last three are kept, each
-bounded) rides with the error and the audit record. Nothing new is persisted,
-and no new permission or API surface is involved.
+process's exit code because on Windows a hard fault (`0xC0000005` and friends,
+which Electron hands over as a negative signed int) and a plugin's own
+`process.exit(1)` are different bugs. The exit code reaches the load error, the
+`failed` service state, the `plugin.crash` audit record and the `plugin` log
+channel. Plugin stdout/stderr is not copied into the crash report because it
+may contain workspace data or secrets. Nothing new is persisted, and no new
+permission or API surface is involved.
 
 The sequence is bounded — `onUnload` gets 1.5s per plugin and teardown 3s in
 total, after which the children are killed outright. A plugin's cleanup must
@@ -202,7 +200,7 @@ Fields:
 - ts
 - errorCode?
 - attempt? / delayMs? (service restarts)
-- exitCode? (crash), exitCodeHex? (Windows hard fault), message? (the plugin's newest output line)
+- exitCode? (crash), exitCodeHex? (Windows hard fault)
 
 ## 9. Uninstall strategy
 
