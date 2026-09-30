@@ -53,6 +53,8 @@ function loadComponent(name, extras = {}) {
         selectText: () => {},
       }),
     },
+    "./ActionBarSlots": { ActionSlotSide: () => null },
+    "../../../plugins/renderer-slots/slot-message": { slotMessage: () => undefined },
     ...extras,
   };
   const module = { exports: {} };

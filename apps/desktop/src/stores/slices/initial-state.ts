@@ -41,7 +41,6 @@ export function createInitialState(): AppStateData {
         .filter(([, meta]) => meta.collapsed === true)
         .map(([path]) => [path, true]),
     ),
-    subagentPanel: null,
     workPanelOpen: false,
     workPanelTabs: [],
     activeWorkPanelTabId: null,
@@ -73,6 +72,7 @@ export function createInitialState(): AppStateData {
     planningStates: {},
     pendingPlans: {},
     planCheckpoints: {},
+    sessionTodos: {},
     page: "chat",
     settingsTab: "general",
     settingsAnchor: null,

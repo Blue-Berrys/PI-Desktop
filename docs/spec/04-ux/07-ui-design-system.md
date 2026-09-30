@@ -253,7 +253,7 @@ token rather than introducing a decorative palette:
 | State | Semantic color | Shape / motion | Meaning |
 |---|---|---|---|
 | Selected | neutral accent | static outlined ring | current conversation |
-| In progress | warning orange | filled dot with a restrained breathing pulse | agent is producing or executing |
+| In progress | warning orange | filled dot; two breathing cycles, then steady | agent is producing or executing |
 | Completed | success green | check mark | latest unread task turn completed |
 | Failed | error red | circled alert mark | latest unread task turn failed |
 
@@ -262,12 +262,17 @@ turn clears the prior terminal outcome; abort clears the live indicator without
 creating a failure. Opening a conversation acknowledges its unread terminal
 outcome: the terminal mark clears immediately and the matching durable task
 notification is marked read so the mark cannot return after a notification
-refresh or app restart. Outcomes already marked read never produce a terminal
-mark. Marking the row read, marking all rows read, or clearing the inbox also
-dismisses any matching task-native banner; a late event for that durable id
-cannot restore the mark, row, or banner. Reduced-motion mode disables the
-breathing animation while retaining its orange fill and localized accessible
-name.
+refresh or app restart. Restoring/focusing the app with that conversation still
+visible in the chat applies the same acknowledgement without requiring a
+session switch; other sessions remain unread. Outcomes already marked read
+never produce a terminal mark. Marking the row read, marking all rows read, or
+clearing the inbox also dismisses any matching task-native banner; a late event
+for that durable id cannot restore the mark, row, or banner. Reduced-motion mode
+disables the breathing animation while retaining its orange fill and localized
+accessible name. Running dots in task rows and related-session hover cards
+animate for two 1.6-second cycles when mounted or entering the running state,
+then remain steady until the status changes. They must not continuously
+submit frames while the rest of the window is idle.
 
 ### 4.6 Tailwind CSS variable stub
 
@@ -1057,8 +1062,8 @@ Codex parity decisions (D034/D070) supersede any older value here.
 | Composer toolbar | MainChat `≥450px` | Left/right control groups stay on one row and do not shrink; mode/permission labels stay single-line and ellipsize |
 | Composer draft height | 1–7 text lines | Auto-grow; internal scroll beyond line 7 |
 | Chat message max width | 760px default band (user-resizable, min 560px) / 600px user plate | Band follows `min(pane, preferred)`; user turns stay compact |
-| Window min width | 1040px | Enforced by Electron for the whole app; opening the panel never changes native bounds |
-| Window min height | 700px | Enforced by Electron |
+| Window min width | 800px | Enforced by Electron for the whole app, capped to the current display work area (D635); opening the panel never changes native bounds |
+| Window min height | 560px | Enforced by Electron, capped to the current display work area (D635) |
 
 An open work panel is a fixed-width in-flow column inside the existing client
 area (ADR 0033 / ADR 0151). Its flex allocation comes from MainChat, but MainPane
@@ -1105,8 +1110,8 @@ header-height background behind the excluded lane without covering its controls.
   Frameless titlebar drag regions never replace the OS resize ownership. A
   300ms stable-bounds settle window prevents recovery logic from competing with
   a slow pointer gesture, and normal base bounds persist 600ms after the last
-  native resize/move event. Width < 1040px or height < 700px is unsupported and
-  prevented by Electron.
+  native resize/move event. Electron enforces an 800×560 minimum, capped to the
+  current display's work area (D635); smaller sizes are unsupported.
 
 ## 11. Component foundations
 
@@ -1236,7 +1241,12 @@ Implementation: `components/ui.tsx → SegmentedControl<T>`.
 | Roles | `radiogroup` (default), `group`, or `tablist` |
 | Item roles | `radio` / none / `tab` — derived from container role |
 | Generic | `<T extends string>` for type-safe value/onChange |
-| Options | `readonly { value: T; label: ReactNode }[]` — label accepts JSX (e.g. count badge) |
+| Options | `readonly { value: T; label: ReactNode; id?: string; controls?: string }[]` — label accepts JSX (e.g. count badge) |
+
+Tablist callers supply stable option `id` and `controls` values to connect
+each tab to its panel through `aria-controls` and the panel's
+`aria-labelledby`. These identifiers must not depend on translated labels.
+Import and Remote Hosts preserve these links when switching tabs or language.
 
 Every multi-option selector rendered as a row of equal buttons **must** use
 `SegmentedControl`. Inline `<div className="settings-segment">` with manual

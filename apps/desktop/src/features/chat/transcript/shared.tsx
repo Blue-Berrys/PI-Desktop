@@ -15,10 +15,10 @@ import type {
 import {
   formatCompactTokenCount,
   isCertificateVerificationError,
-  THINKING_LEVELS,
-  type ThinkingLevel,
 } from "@pi-desktop/shared";
 import { useOpenChatFileRef, useOpenPreviewTarget } from "../../../hooks/use-preview-target";
+import { useChatFileMenu } from "../../../hooks/use-chat-file-menu";
+import { ContextMenu } from "../../../components/ContextMenu";
 import { useDisclosureAnchorNotifier } from "../../../lib/disclosure-anchor-context";
 import { isThinkingActive, resolveThinkingDisplayMode } from "../../../lib/turn-process";
 import { TranscriptSearchContext } from "../../../lib/transcript-search-context";
@@ -29,7 +29,7 @@ import { useReferencedImageDataUrl } from "../../../lib/use-referenced-image-dat
 import { useVerifiedChatText } from "../../../hooks/use-verified-chat-text";
 import { isHtmlFilePath } from "../../../lib/chat-links";
 import type { SourcePositionProps } from "../../../lib/markdown-source";
-import { getToolAction, type ToolAction } from "../../../lib/tool-display";
+import type { ToolAction } from "../../../lib/tool-display";
 import { calculateTokenRate } from "../../../lib/context-usage";
 import { useAppStore } from "../../../stores/app-store";
 import { Markdown, useCopy } from "../../../components/Markdown";
@@ -39,7 +39,6 @@ import {
   IconBot,
   IconBranch,
   IconCheck,
-  IconChevronDown,
   IconChevronRight,
   IconCircleAlert,
   IconCode,
@@ -48,6 +47,7 @@ import {
   IconFolder,
   IconGlobe,
   IconImage,
+  IconListChecks,
   IconPencil,
   IconSearch,
   IconSheet,
@@ -321,7 +321,6 @@ export function AssistantErrorMessage({ message }: { message: UiMessage }) {
     </section>
   );
 }
-
 export const TOOL_ACTION_KEYS: Record<ToolAction, string> = {
   read: "chat.toolRead",
   list: "chat.toolListed",
@@ -332,6 +331,7 @@ export const TOOL_ACTION_KEYS: Record<ToolAction, string> = {
   fetch: "chat.toolFetched",
   fork: "chat.toolUsed",
   delegate: "chat.toolDelegated",
+  todo: "chat.todo.updated",
   use: "chat.toolUsed",
 };
 
@@ -362,6 +362,7 @@ export const TOOL_RUNNING_KEYS: Record<ToolAction, string> = {
   fetch: "chat.toolFetching",
   fork: "chat.toolUsing",
   delegate: "chat.toolDelegating",
+  todo: "chat.todo.updating",
   use: "chat.toolUsing",
 };
 
@@ -377,6 +378,8 @@ export function ToolActionIcon({ action }: { action: ToolAction }) {
     case "write":
     case "edit":
       return <IconPencil {...props} />;
+    case "todo":
+      return <IconListChecks {...props} />;
     case "run":
       return <IconTerminal {...props} />;
     case "fetch":
@@ -417,31 +420,38 @@ export function FileRefChip({
   name,
   path,
   kind,
+  mimeType,
   onOpen,
   ...position
 }: {
   name: string;
   path: string;
   kind?: "image" | "file";
-  onOpen: (path: string) => void;
+  mimeType?: string;
+  onOpen: (path: string, baseDir?: string, mimeType?: string) => void;
 } & SourcePositionProps) {
   const { t } = useTranslation();
   const Icon = fileChipIcon(name, kind);
+  const { fileMenu, openFileMenu, closeFileMenu } = useChatFileMenu();
   const html = isHtmlFilePath(path) || isHtmlFilePath(name);
   return (
-    <button
-      type="button"
-      className="composer-chip chat-file-chip"
-      {...position}
-      title={`${html ? t("chat.previewUrl") : t("chat.openFile")} — ${path}`}
-      aria-label={`${name} — ${path}`}
-      onClick={() => onOpen(path)}
-    >
-      <span className="composer-chip-icon" aria-hidden>
-        <Icon size={13} />
-      </span>
-      <span className="composer-chip-name">{name}</span>
-    </button>
+    <>
+      <button
+        type="button"
+        className="composer-chip chat-file-chip"
+        {...position}
+        title={`${html ? t("chat.previewUrl") : t("chat.openFile")} — ${path}`}
+        aria-label={`${name} — ${path}`}
+        onClick={() => onOpen(path, undefined, mimeType)}
+        onContextMenu={(event) => openFileMenu(event, { path })}
+      >
+        <span className="composer-chip-icon" aria-hidden>
+          <Icon size={13} />
+        </span>
+        <span className="composer-chip-name">{name}</span>
+      </button>
+      <ContextMenu state={fileMenu} onClose={closeFileMenu} />
+    </>
   );
 }
 
@@ -455,8 +465,9 @@ export function MessageAttachmentImage({
   onOpenFile,
 }: {
   attachment: MessageAttachment;
-  onOpenFile: (path: string) => void;
+  onOpenFile: (path: string, baseDir?: string, mimeType?: string) => void;
 }) {
+  const { fileMenu, openFileMenu, closeFileMenu } = useChatFileMenu();
   const dataUrl = useReferencedImageDataUrl(attachment.ref, attachment.mimeType);
   if (!dataUrl) {
     return (
@@ -464,22 +475,27 @@ export function MessageAttachmentImage({
         name={attachment.name}
         path={attachment.ref}
         kind="image"
+        mimeType={attachment.mimeType}
         onOpen={onOpenFile}
       />
     );
   }
   return (
-    <button
-      type="button"
-      className="message-attachment-image"
-      role="listitem"
-      title={`${attachment.name} — ${attachment.ref}`}
-      onClick={() =>
-        useAppStore.getState().openFileInWorkPanel(attachment.ref, attachment.mimeType)
-      }
-    >
-      <img src={dataUrl} alt={attachment.name} />
-    </button>
+    <>
+      <button
+        type="button"
+        className="message-attachment-image"
+        role="listitem"
+        title={`${attachment.name} — ${attachment.ref}`}
+        onClick={() =>
+          useAppStore.getState().openFileInWorkPanel(attachment.ref, attachment.mimeType)
+        }
+        onContextMenu={(event) => openFileMenu(event, { path: attachment.ref })}
+      >
+        <img src={dataUrl} alt={attachment.name} />
+      </button>
+      <ContextMenu state={fileMenu} onClose={closeFileMenu} />
+    </>
   );
 }
 
