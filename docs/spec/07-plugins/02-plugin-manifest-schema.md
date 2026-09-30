@@ -215,7 +215,8 @@ type PluginThemeContrib = {
  label: string;
  path: string; // relative `.css` file
  base?: "light" | "dark"; // palette the overrides layer on, default `dark`
- assets?: string[]; // absolute png/jpg/jpeg/webp/avif/svg/woff2, 4 MB summed;
+ assets?: string[]; // package-relative or absolute png/jpg/jpeg/webp/avif/svg/woff2, 4 MB summed;
+                    // relative paths resolve inside plugin root; traversal/node_modules are rejected;
                     // each matching `url()` is rewritten to `plugin-asset://`
 };
 
@@ -293,8 +294,20 @@ type PluginProviderModelContrib = {
  contextWindow?: number;
  maxTokens?: number;
  supportsImages?: boolean;
+ /** Canonical thinking levels offered by this model, in declaration order. */
+ thinkingLevels?: string[];
+ /** New sessions use this level when it is present in `thinkingLevels`. */
+ defaultThinkingLevel?: string;
 };
 ```
+To materialize these fields, the Host trims entries, drops unknown canonical
+names, removes duplicates, and preserves the remaining declaration order. An
+absent or unusable list becomes an empty binding. `defaultThinkingLevel` is kept
+only when it names a normalized level in that model's list; otherwise it is
+dropped and normal binding normalization selects the first available level.
+Manifest validation rejects a non-array `thinkingLevels`, any non-string entry, or
+an explicitly non-string `defaultThinkingLevel`; unknown string names are
+accepted and dropped during normalization.
 
 ## 5. permissions enum
 
@@ -314,6 +327,7 @@ type PluginPermission =
  | "agent.prompt.inject"
  | "provider.register"
  | "net.fetch"
+ | "net.anyHost"
  | "shell.openExternal"
  | "mcp.server.local"
  | "mcp.server.remote"
@@ -398,6 +412,18 @@ covers the domain and its subdomains.
 connect is confined to `manifest.net.domains`, and a host that is not declared
 is refused before the transport is asked to open anything.
 
+### 5.3.1 net.anyHost — the escape hatch
+
+`"net.anyHost"` lifts the allowlist for a plugin whose endpoints the user types
+in (a self-hosted server, a personal domain no manifest written ahead of time
+can name). With the grant, every egress path above admits any host over
+http(s)/ws(s) — except cloud metadata endpoints (`169.254.169.254` and peers),
+which the grant never reaches: their answers are instance credentials. A host
+declared in `net.domains` keeps today's behavior, so existing manifests are
+unaffected; a plugin without the grant sees no change either. The grant is
+an install-time permission like any other: the user sees it in the review
+dialog and nothing prompts at request time.
+
 ## 5.1 Bus topic grammar
 
 Topics are dot-separated segments matching `[a-zA-Z0-9][a-zA-Z0-9_-]*`, at most
@@ -427,6 +453,12 @@ as rows in the native provider list, owned by the plugin ([ADR 0259](../../adr/0
   are the provider-config styles except `auto`
 - `authKind` is optional, either `api_key` (default) or `none`
 - `models` requires 1..64 entries with unique ids of 1..256 characters
+
+`thinkingLevels` is optional. The Host trims entries, drops unknown canonical
+names, removes duplicates, and preserves the remaining declaration order. An
+absent or unusable list becomes an empty binding. `defaultThinkingLevel` is kept
+only when it names a normalized level in that model's list; otherwise it is
+dropped and normal binding normalization selects the first available level.
 
 A non-empty `contributes.providers` needs the high-risk `provider.register`
 permission ([13-plugin-permissions-matrix.md](13-plugin-permissions-matrix.md)).

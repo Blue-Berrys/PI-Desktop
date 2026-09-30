@@ -15,6 +15,7 @@ inspectable while still making everyday coding work feel direct.
 |---|---|
 | See what the app looks like | [Screens](/guide/screenshots) |
 | Run recurring local tasks | [Scheduled tasks](/guide/automations) |
+| Add an MCP catalog and its key | [MCP market](/guide/mcp-market) |
 | Understand what is shipped | [Product scope](/spec/01-product/01-product-scope) |
 | Learn how the system fits together | [Architecture](/spec/02-architecture/01-architecture) |
 | Trace a protocol or storage boundary | [Runtime specs](/spec/03-runtime/01-ipc-protocol) |
@@ -59,3 +60,7 @@ number; use the sidebar when you are exploring a domain.
 See the [AI development workflow](/spec/06-delivery/03-ai-development-workflow)
 and [change checklist](/spec/06-delivery/05-change-checklist) for the complete
 repository rules.
+
+## StepFun Plan
+
+See [StepFun Plan setup](stepfun.md) for the subscription endpoint and model configuration.

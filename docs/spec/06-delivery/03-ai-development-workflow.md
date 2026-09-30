@@ -56,8 +56,14 @@ The rules below govern every change to the PI-Desktop codebase and documentation
   toolchains, package-manager stores, build caches, and ignored local
   environment configuration remain the canonical environment. Reference or
   link those resources into the request worktree when required; do not copy
-  environment state into tracked files. Install or generate worktree-local
-  state only when isolation or version compatibility requires it.
+  environment state into tracked files. Generate other worktree-local state only
+  when isolation or version compatibility requires it.
+- Task-candidate E2E runs from the request worktree but must reuse the host
+  dependency/runtime environment already provisioned in the primary checkout.
+  Do not run `pnpm install`, `npm install`, or create a second environment
+  solely for E2E. Keep temporary profiles, data directories, sockets, ports,
+  logs, and artifacts isolated; install or rebuild only when host dependencies
+  are missing or incompatible, and record the reason.
 - Development commits and direct pushes on `main` are forbidden.
 - A commit request does not itself authorize remote publishing. If remote
   delivery has not been authorized, stop after the request-branch commit in the
@@ -179,6 +185,30 @@ an unambiguous pull request number for this repository.
 - When both an issue and a pull request are linked, R6 applies to the pull
   request and R5 still applies to the issue after the merged outcome.
 
+#### R6.1 — Temporary pull-request type restriction
+
+> **While this subsection is in force, outside contributions are limited to
+> `perf` and `fix` pull requests; maintainer-planned work keeps every type.**
+
+- Effective 2026-09-26 until a maintainer removes this subsection.
+- The restriction governs outside contributions. Maintainers — accounts with
+  write access to this repository, plus the branches and automated agent work
+  they direct — keep every change type, including `feat`.
+- An outside pull request of any other change type — `feat`, `refactor`,
+  `docs`, `test`, `chore`, `build`, or `ci` — is not a landing candidate.
+  Comment with this policy in the pull request's language, then close it
+  without merging, and do not reimplement it as a replacement while the
+  restriction is in force. The type is read from the pull request's title and
+  commits; relabelling other work as `fix` or `perf` does not qualify it.
+- Feature intent goes to a feature request issue, not to a pull request.
+- `fix` and `perf` pull requests still carry the full R6 bar: the real root
+  cause, the smallest coherent change, and no harm blockers.
+- Closing a pull request whose type is out of scope does not violate R6's "do
+  not discard contributor work" clause; that clause protects an in-scope
+  root-cause fix.
+- Removing this subsection lifts the restriction. It is not a permanent
+  narrowing of the contribution scope.
+
 ### R7 — Code-bearing changes require relevant E2E after main integration
 
 > **Every code-bearing change must pass relevant E2E on a candidate that
@@ -295,6 +325,12 @@ Every change follows this sequence. Steps may be iterated if the implementation 
   a PR/MR is opened, and must run the union of suites required by the affected
   regression surfaces. The available commands are defined by the root
   `package.json` and the selection matrix in `04-e2e-test-plan.md`.
+- Task-candidate E2E may use the request worktree's source, but it must use the
+  host dependency/runtime environment described in R4. Do not reinstall the
+  repository environment for each run; only missing or incompatible host
+  dependencies justify installation or rebuild, and that reason must be
+  recorded. Temporary profiles, data, sockets, ports, logs, and artifacts
+  remain isolated from the host's mutable runtime state.
 - Development-time iteration remains risk-based: an E2E run on a stale request
   branch may be used for debugging, but only a run after incorporating
   `origin/main` satisfies this policy.
@@ -452,10 +488,13 @@ worktree directly from the fetched `origin/main`. Never discard, stash, move,
 or overwrite unrelated work merely to satisfy this sequence.
 
 Environment reuse is resource-specific. Package-manager stores and language
-toolchains are normally shared automatically. Ignored local configuration or a
-compatible dependency tree may be referenced or linked from the primary
-checkout when a task needs it. Build outputs that can race, mutable runtime
-data, and incompatible dependency trees must remain worktree-local.
+toolchains are normally shared automatically. A compatible dependency tree
+and Electron/Rust build targets should be referenced or linked from the
+primary checkout when a task needs them; do not run `pnpm install` or
+`npm install` merely because the request uses a separate worktree. Build
+outputs that can race, mutable runtime data, temporary E2E profiles, and
+incompatible dependency trees must remain worktree-local. Clean CI and release
+runners are the exception and may install from lockfiles.
 
 Typical authorized GitHub delivery (use the hosting platform's equivalent when
 needed; synchronize and clean up from the clean primary checkout after merge):
@@ -618,4 +657,7 @@ This workflow spec itself is accepted when:
       on in the issue language and closed when conclusive.
 - [ ] Linked GitHub pull requests land only when they fix the reported root
       cause with a minimal diff; contributor work is not discarded for nits.
+- [ ] Outside contributions are limited to `perf` and `fix` pull requests while
+      the temporary type restriction in R6.1 is in force.
+
 - [ ] All indexes updated (NAV, delivery README, spec README, docs README, BOARD).

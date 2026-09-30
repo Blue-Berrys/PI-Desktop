@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
+import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
+  AUTO_COMPACTION_TRIGGER_RATIO,
+  automaticCompactionThresholdFor,
   COMPACTION_MAX_KEEP_RECENT_TOKENS,
   COMPACTION_MIN_KEEP_RECENT_TOKENS,
   COMPACTION_RETAINED_USER_MESSAGE_MAX_TOKENS,
@@ -23,6 +26,18 @@ describe("contextBudgetFor", () => {
         requestHeadroom: 32_000,
         keepRecentTokens: 44_800,
       });
+  });
+  it("derives an early automatic trigger while preserving the hard guard", () => {
+    const limits = contextBudgetLimitsFor({
+      contextWindow: 256_000,
+      maxTokens: 32_000,
+    });
+    const trigger = automaticCompactionThresholdFor(limits);
+
+    expect(AUTO_COMPACTION_TRIGGER_RATIO).toBe(0.9);
+    expect(trigger).toBe(201_600);
+    expect(trigger).toBeLessThan(limits.hardLimit);
+    expect(automaticCompactionThresholdFor({ hardLimit: 1 })).toBe(1);
   });
 
   it("clamps the retained tail for a small model context window", () => {
@@ -128,5 +143,90 @@ describe("retainedUserMessageBudget", () => {
 
   it("stays positive when half the budget rounds to zero", () => {
     expect(retainedUserMessageBudget({ hardLimit: 1 })).toBe(1);
+  });
+});
+
+describe("hosted search target model threading", () => {
+  /** A Responses model carrying the identity an adapter stamps. */
+  const model = (id: string): Model<"openai-responses"> => ({
+    id,
+    name: "test",
+    api: "openai-responses",
+    provider: "openai",
+    baseUrl: "http://localhost",
+    reasoning: false,
+    input: ["text"],
+    contextWindow: 200_000,
+    maxTokens: 8_192,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+  });
+
+  const searchHistory = (modelId: string, size: number): AssistantMessage => ({
+    role: "assistant",
+    api: "openai-responses",
+    provider: "openai",
+    model: modelId,
+    content: [
+      {
+        type: "hostedSearch",
+        phase: "web_search_call",
+        blockId: "search_fixture",
+        wire: {
+          type: "web_search_call",
+          id: "search_fixture",
+          status: "completed",
+          action: { type: "search", query: "a".repeat(size) },
+        },
+      },
+    ],
+    timestamp: 1,
+    stopReason: "stop",
+    usage: {
+      input: 0,
+      output: 0,
+      cacheRead: 0,
+      cacheWrite: 0,
+      totalTokens: 0,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+    },
+  });
+
+  it("charges the search history the target model replays", () => {
+    const target = model("gpt-test");
+    const small = contextBudgetFor(target, [searchHistory("gpt-test", 100)]).tokens;
+    const large = contextBudgetFor(target, [searchHistory("gpt-test", 10_100)])
+      .tokens;
+    expect(small).toBeGreaterThan(0);
+    expect(large - small).toBe(2_500);
+  });
+
+  it("charges nothing for search the target model cannot replay", () => {
+    // The Responses adapter replays `web_search_call` items only for the model
+    // that produced them: the request carries nothing for another id, so the
+    // budget must not count it either.
+    expect(
+      contextBudgetFor(model("gpt-test"), [searchHistory("other-model", 10_000)])
+        .tokens,
+    ).toBe(0);
+  });
+
+  it("stays conservative when the caller has partial model facts", () => {
+    // Window facts alone say nothing about which items the provider replays;
+    // charging them keeps the hard limit safe.
+    const tokens = contextBudgetFor(
+      { contextWindow: 200_000, maxTokens: 8_192 },
+      [searchHistory("other-model", 10_000)],
+    ).tokens;
+    expect(tokens).toBeGreaterThan(2_000);
+  });
+
+  it("derives the same thresholds from a full model as from its window facts", () => {
+    const full = model("gpt-test");
+    expect(contextBudgetLimitsFor(full)).toEqual(
+      contextBudgetLimitsFor({
+        contextWindow: full.contextWindow,
+        maxTokens: full.maxTokens,
+      }),
+    );
   });
 });

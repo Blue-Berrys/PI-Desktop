@@ -10,6 +10,7 @@ import {
   zhCN,
   zhTW,
   ko,
+  ptBR,
 } from "../src/index.ts";
 
 function placeholders(value) {
@@ -28,6 +29,31 @@ test("every shipped catalog matches English keys and interpolation variables", (
       assert.deepEqual(placeholders(flat[key]), placeholders(english[key]), `${id} ${key}`);
     }
   }
+});
+
+test("Live Voice preparation and call recovery copy is localized in every shipped catalog", () => {
+  const keys = [
+    "prepareCall", "details", "workOptions", "allowWork", "noWorkSession",
+    "playbackBlocked", "playbackFailed", "mediaReleaseUnconfirmed",
+    "callActionFailed", "workNotConnected", "transcript", "transcriptEmpty",
+    "userSpeaking", "assistantSpeaking", "muted", "resumePlayback",
+    "selectWorkSession", "shareContext", "contextConsent", "contextShared",
+    "contextNotShared", "createWorkSession", "viewWorkSession", "enableDetail",
+    "microphoneDenied", "microphoneUnavailable", "microphoneBusy",
+    "phase.connecting", "phase.closing",
+  ].map((key) => `liveVoice.${key}`);
+
+  for (const [id, catalog] of Object.entries(catalogs)) {
+    const flat = flattenCatalog(catalog);
+    for (const key of keys) {
+      assert.equal(typeof flat[key], "string", `${id} ${key}`);
+      assert.notEqual(flat[key].trim(), "", `${id} ${key}`);
+      if (id !== "en") assert.notEqual(flat[key], english[key], `${id} ${key} must not fall back to English`);
+    }
+  }
+
+  assert.match(english["liveVoice.enableDetail"], /voice-only by default/);
+  assert.match(english["liveVoice.enableDetail"], /separate opt-in and work session/);
 });
 
 test("canonical thinking levels are not translated catalog entries", () => {
@@ -164,23 +190,28 @@ test("locale resolution maps variants onto shipped catalogs and falls back to En
   assert.equal(resolveLocale("ko"), "ko");
   assert.equal(resolveLocale("ko-KR"), "ko");
   assert.equal(resolveLocale("ko_KR"), "ko");
+  assert.equal(resolveLocale("pt"), "pt-BR");
+  assert.equal(resolveLocale("pt-BR"), "pt-BR");
+  assert.equal(resolveLocale("pt_BR"), "pt-BR");
+  assert.equal(resolveLocale("pt-PT"), "pt-BR");
   assert.equal(resolveLocale(), "en");
 });
 
 test("the locale registry lists English first, then other locales by English name", () => {
   assert.deepEqual(
     supportedLocales.map((locale) => locale.id),
-    ["en", "zh-CN", "zh-TW", "de", "es", "tr", "fr", "ko"],
+    ["en", "zh-CN", "zh-TW", "de", "es", "tr", "fr", "ko", "pt-BR"],
   );
   assert.deepEqual(
     listedLocales().map((locale) => locale.id),
-    ["en", "zh-CN", "zh-TW", "fr", "de", "ko", "es", "tr"],
+    ["en", "zh-CN", "zh-TW", "fr", "de", "ko", "pt-BR", "es", "tr"],
   );
   assert.equal(localeInfoNative("de"), "Deutsch");
   assert.equal(localeInfoNative("es"), "Español");
   assert.equal(localeInfoNative("fr"), "Français");
   assert.equal(localeInfoNative("tr"), "Türkçe");
   assert.equal(localeInfoNative("ko"), "한국어");
+  assert.equal(localeInfoNative("pt-BR"), "Português (Brasil)");
   assert.equal(english["settings.languageSearchPlaceholder"], "Search languages…");
   assert.equal(english["settings.themeSearchPlaceholder"], "Search themes…");
   assert.equal(english["settings.languageAutoDesc"], "Currently {{state}}");
@@ -203,6 +234,12 @@ test("the locale registry lists English first, then other locales by English nam
   assert.equal(flattenCatalog(ko)["nav.projects"], "프로젝트");
   assert.equal(flattenCatalog(ko)["nav.temporarySessions"], "임시 대화");
   assert.notEqual(flattenCatalog(ko)["app.tagline"], english["app.tagline"]);
+  const brazilian = flattenCatalog(catalogs["pt-BR"]);
+  assert.equal(brazilian["settings.language"], "Idioma");
+  assert.equal(brazilian["settings.languageAuto"], "Usar idioma do sistema");
+  assert.equal(brazilian["nav.projects"], "Projetos");
+  assert.equal(brazilian["nav.temporarySessions"], "Conversas temporárias");
+  assert.notEqual(brazilian["app.tagline"], english["app.tagline"]);
 });
 
 function localeInfoNative(id) {

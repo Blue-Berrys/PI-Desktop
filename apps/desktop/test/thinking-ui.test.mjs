@@ -15,6 +15,11 @@ import { loadStyles } from "./helpers/styles.mjs";
 const composerSource = await readComposerSource();
 const composerToolbarSource = await readComposerModule("ComposerToolbar.tsx");
 const composerModelPickerSource = await readComposerModule("ComposerModelPicker.tsx");
+const composerPermissionPickerSource = await readComposerModule("ComposerPermissionPicker.tsx");
+const scheduledModelPickerSource = await readFile(
+  new URL("../src/features/scheduled/ScheduledModelPicker.tsx", import.meta.url),
+  "utf8",
+);
 const transcriptSource = await readTranscriptSource();
 const transcriptSharedSource = await readTranscriptModule("shared.tsx");
 const transcriptToolRowSource = await readTranscriptModule("ToolRow.tsx");
@@ -24,11 +29,22 @@ const appSource = await readFile(
   new URL("../src/components/ChatSurface.tsx", import.meta.url),
   "utf8",
 );
+const launchErrorSource = await readFile(
+  new URL("../src/lib/chat-launch-error.ts", import.meta.url),
+  "utf8",
+);
 const providerCatalogSource = await readMainModule("runtime/provider-catalog.ts");
 const sessionIpcSource = await readMainModule("ipc/session-ipc.ts");
 const sessionLaunchSource = await readMainModule("runtime/session-launch.ts");
 const storeSource = await readStoreSource();
 const sessionCoordinationSource = await readStoreModule("runtime/session-coordination.ts");
+const modelMenuSource = await readFile(
+  new URL(
+    "../src/features/chat/composer/hooks/useComposerModelMenu.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
 // Agent/Plan mode and model selection are owned by the Composer; the
 // conversation top bar only hosts the task title and window actions.
 const topbarSource = await readFile(
@@ -59,12 +75,13 @@ test("composer exposes the runtime thinking level order and provider filtering",
   assert.match(composerSource, /supportsReasoning/);
   assert.match(composerSource, /thinkingLevelForProvider/);
   assert.match(composerSource, /thinkingLevel:\s*level/);
-  assert.match(composerSource, /composer-thinking-list/);
+  // The level is a drag on the slider: no reasoning list submenu to render.
+  assert.doesNotMatch(composerSource, /composer-thinking-list/);
   assert.doesNotMatch(stylesSource, /\.composer-thinking-levels/);
   assert.doesNotMatch(stylesSource, /\.composer-thinking-level\b/);
   assert.match(
     stylesSource,
-    /\.composer-model-thinking-menu\s*\{[\s\S]*?width:\s*min\(300px,\s*calc\(100vw - 24px\)\);/,
+    /\.composer-model-thinking-menu\s*\{[\s\S]*?width:\s*min\(280px,\s*calc\(100vw - 24px\)\);/
   );
   assert.match(composerSource, /availableThinkingLevels/);
   assert.match(composerSource, /thinkingMenuLevels/);
@@ -72,7 +89,8 @@ test("composer exposes the runtime thinking level order and provider filtering",
 
 test("thinking levels use their canonical English values without i18n", () => {
   assert.match(composerSource, /const thinkingLabel = thinkingLevel;/);
-  assert.match(composerSource, /<span className="flex-1">\s*\{level\}/);
+  // The slider's ticks print the canonical level values themselves.
+  assert.match(composerSource, /onClick=\{\(\) => select\(stop\)\}>\{candidate\}<\/button>/);
   assert.doesNotMatch(composerSource, /THINKING_LEVEL_(LABELS|I18N_KEYS)/);
   assert.doesNotMatch(composerSource, /chat\.effort(?:Off|Minimal|Low|Mid|High|Xhigh|Max)/);
   assert.doesNotMatch(transcriptSource, /thinkingLevel\./);
@@ -80,20 +98,30 @@ test("thinking levels use their canonical English values without i18n", () => {
 });
 
 test("Composer owns the mode and model controls", () => {
-  const leftToolbar = composerSource.slice(
-    composerSource.indexOf('<div className="composer-left">'),
-    composerSource.indexOf('<div className="composer-right">'),
+  const leftToolbar = composerToolbarSource.slice(
+    composerToolbarSource.indexOf('<div className="composer-left">'),
+    composerToolbarSource.indexOf('<div className="composer-right">'),
   );
   const modeControl = leftToolbar.indexOf(
     'className="icon-btn mode-chip composer-mode-chip"',
   );
-  const permissionControl = leftToolbar.indexOf('className="composer-permission"');
+  const permissionControl = leftToolbar.indexOf("<ComposerPermissionPicker");
   const rightToolbar = composerToolbarSource.slice(
     composerToolbarSource.indexOf('<div className="composer-right">'),
   );
 
   assert.ok(modeControl >= 0);
   assert.ok(permissionControl > modeControl);
+  // The task draft has no session, so its picker must not claim one: with
+  // `activeSessionId` unset the menu resolves the selected model's binding
+  // default thinking level instead of pinning the draft to its current value.
+  assert.match(scheduledModelPickerSource, /activeSessionId: null/);
+  assert.doesNotMatch(scheduledModelPickerSource, /useId\(/);
+  assert.match(scheduledModelPickerSource, /composerModelDisplayName\(provider, value\.modelId \?\? ""\)/);
+  assert.doesNotMatch(
+    scheduledModelPickerSource,
+    /composerModelDisplayName\(provider, value\.modelId \?\? "", selected\.displayName\)/,
+  );
   assert.doesNotMatch(leftToolbar, /composer-thinking|thinking-chip/);
   assert.doesNotMatch(topbarSource, /ModelSelect|model-chip/);
   assert.doesNotMatch(topbarSource, /ct-mode|ct-mode-btn|configureActiveSession/);
@@ -163,10 +191,22 @@ test("draft Composer thinking follows the exact model selected in its menu", () 
   );
   assert.match(
     composerSource,
-    /const nextThinkingLevel = activeSession[\s\S]*?thinkingLevelForProvider\(nextModelProvider, thinkingLevel\)[\s\S]*?initialThinkingLevelForBinding\(/,
+    /const selectedSameModel =\s*activeSessionId &&\s*candidate\.id === provider\?\.id &&\s*sameComposerModelId\(modelId \?\? "", nextModelId\);/,
+  );
+  assert.match(
+    composerSource,
+    /const nextThinkingLevel = selectedSameModel\s*\?\s*thinkingLevelForProvider\(nextModelProvider, thinkingLevel\)[\s\S]*?initialThinkingLevelForBinding\([\s\S]*?initialThinkingLevelForUnmatchedModel\(/,
   );
   assert.match(composerSource, /const selectedBinding = provider\?\.models\.find/);
-  assert.match(composerSource, /const draftThinkingLevel = initialThinkingLevelForBinding\(/);
+  assert.match(
+    composerSource,
+    /const draftThinkingLevel = selectedModelInfo\?\.catalogSource === "models\.dev"\s*\?\s*initialThinkingLevelForBinding\(/,
+  );
+  assert.match(composerSource, /initialThinkingLevelForUnmatchedModel\(/);
+  assert.match(modelMenuSource, /initialThinkingLevelForUnmatchedModel\(/);
+  assert.match(sessionCoordinationSource, /initialThinkingLevelForUnmatchedModel\(/);
+  assert.match(modelMenuSource, /nextModel\?\.catalogSource === "models\.dev"/);
+  assert.match(sessionCoordinationSource, /catalogModel\?\.catalogSource === "models\.dev"/);
   assert.doesNotMatch(composerSource, /highestSupportedThinkingLevel/);
 });
 
@@ -192,10 +232,9 @@ test("main resolves reasoning from each session's exact selected model", () => {
   assert.match(providerCatalogSource, /const enrichSession/);
   assert.match(providerCatalogSource, /const resolveSessionCapabilityTarget/);
   assert.match(providerCatalogSource, /defaults\?\.defaultProviderId/);
-  assert.match(providerCatalogSource, /modelsDevModelFor\(provider, modelId\)/);
   assert.match(sessionIpcSource, /result\.sessions\.map\(\(session\) =>/);
   assert.match(sessionIpcSource, /enrichSession\(session, providers, defaults\)/);
-  assert.match(providerCatalogSource, /modelConfigFromModelsDev\(\s*modelsDevModel,\s*provider\.baseUrl\s*\)/);
+  assert.match(providerCatalogSource, /catalogModelConfigFor\(modelsDevCatalog/);
   // models.dev records stamp reasoning capability per exact model id.
   assert.match(providerCatalogSource, /capabilitiesFromModelConfig\(modelConfig\)/);
   assert.match(providerCatalogSource, /supportsReasoning/);
@@ -213,7 +252,7 @@ test("transcript keeps assistant thinking in a separate disclosure", () => {
   assert.match(transcriptSource, /thinking-prose[\s\S]*?Markdown source=\{text\}/);
   assert.match(transcriptSource, /CopyButton text=\{content\}/);
   assert.match(transcriptSource, /messageThinking as thinkingText/);
-  assert.match(transcriptSource, /onlyThinking = items\.every/);
+  assert.match(transcriptSource, /onlyThinking = useMemo\(\(\) => items\.every/);
   assert.match(stylesSource, /\.thinking-prose/);
 });
 
@@ -245,11 +284,11 @@ test("detailed mode opens the last tool while compact keeps payloads collapsed",
   assert.match(transcriptSource, /useAutomaticDisclosure\(\s*hasSubagentTopology \? live : visibleItems\.length <= 1/);
   assert.match(
     transcriptSource,
-    /<ThinkingRow[\s\S]*?autoOpen=\{live && itemIndex === items.length - 1\}/,
+    /<ThinkingRow[\s\S]*?autoOpen=\{live && item === lastItem\}/,
   );
   assert.match(
     transcriptSource,
-    /const autoOpenLatest =\s*!compact && isLast && itemIndex === items.length - 1/,
+    /const autoOpenLatest =\s*!compact && isLast && item === lastItem/,
   );
   assert.match(transcriptSource, /<ToolRow[\s\S]*?autoOpen=\{autoOpenLatest\}/);
   assert.match(transcriptToolRowSource, /const disclosure = useAutomaticDisclosure\(\s*autoOpen && !failed && status !== "denied",\s*revealRequest/);
@@ -275,8 +314,9 @@ test("activity headers omit the redundant status capsule", () => {
 });
 
 test("thinking-only assistant streams open the transcript surface", () => {
-  assert.match(appSource, /typeof message\.thinking === "string"/);
-  assert.match(appSource, /hasContent \|\| hasThinking/);
+  assert.match(launchErrorSource, /typeof message\.thinking === "string"/);
+  assert.match(launchErrorSource, /hasContent \|\| hasThinking/);
+  assert.match(appSource, /messageHasTranscriptContent\(message\)/);
 });
 
 test("provider settings persist model-local limits and thinking configuration", () => {
@@ -291,7 +331,8 @@ test("provider settings persist model-local limits and thinking configuration", 
 });
 
 test("main forwards the complete models.dev model record to the sidecar", () => {
-  assert.match(sessionLaunchSource, /modelConfigFromModelsDev/);
+  // catalogModelConfigFor returns modelConfigFromModelsDev for a resolved record.
+  assert.match(sessionLaunchSource, /catalogModelConfigFor/);
   assert.doesNotMatch(sessionLaunchSource, /resolvePiModelConfig/);
   assert.match(sessionLaunchSource, /\.\.\.\(modelConfig \? \{ modelConfig \} : \{\}\)/);
   assert.doesNotMatch(sessionLaunchSource, /modelCompat/);

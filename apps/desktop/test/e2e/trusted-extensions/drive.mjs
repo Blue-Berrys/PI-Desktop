@@ -1,5 +1,6 @@
 // MCP-control driver for the trusted extensions E2E run.
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, writeFileSync } from "node:fs";
+import { connectRenderer } from "./renderer.mjs";
 import { join } from "node:path";
 
 const root = process.env.E2E_ROOT || "/tmp/pi-ext-e2e";
@@ -48,6 +49,19 @@ async function waitForTurn(sessionId, timeoutMs = 60_000) {
   throw new Error("turn did not finish");
 }
 
+async function waitForReply(sessionId, userText) {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const detail = await tool("pi_session_get", { id: sessionId });
+    const messages = detail?.session?.messages ?? [];
+    const index = messages.findLastIndex((message) => message.role === "user" && message.content === userText);
+    const reply = index < 0 ? undefined : messages.slice(index + 1).find((message) => message.role === "assistant");
+    if (reply?.content) return reply;
+    await sleep(50);
+  }
+  throw new Error("Current turn reply was not persisted");
+}
+
 await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "e2e", version: "0" } });
 await tool("pi_project_open", { path: project });
 const created = await tool("pi_session_create", { title: "ext e2e", projectPath: project, mode: "agent" });
@@ -67,7 +81,7 @@ check("tool_result replacement reached the model", /42 \(replaced\)/.test(assist
 const requests = readFileSync(join(root, "requests.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
 const first = requests[0];
 const sys = (first.payload.messages.find((m) => m.role === "system")?.content ?? "");
-check("before_agent_start marker in system prompt", sys.includes("E2E-MARKER-7f3"));
+check("before_agent_start chains two plugins in extension ID order", sys.includes("E2E-MARKER-7f3\n\nE2E-MARKER-greet"));
 check("before_provider_headers header sent", first.headers["x-e2e-ext"] === "yes", JSON.stringify(first.headers["x-e2e-ext"]));
 check("ToolSearch activation advertised fx_add to a later request", requests.some((r) => (r.payload.tools ?? []).some((t) => t.function?.name === "fx_add")));
 check("hooks log has session_start, tool_call fx_add, tool_result, turn_end", (() => { const h = readFileSync(join(root, "hooks.log"), "utf8"); return ["session_start startup", "before_agent_start", "tool_call fx_add", "fx_add 20+22", "tool_result fx_add false", "turn_end", "agent_end", "after_provider_response 200", "before_provider_request object", "context "].every((k) => h.includes(k)); })(), readFileSync(join(root, "hooks.log"), "utf8").split("\n").slice(0, 14).join(" | "));
@@ -145,26 +159,22 @@ for (let i = 0; i < 40; i++) {
   const now = readFileSync(logPath, "utf8").split("\n").filter((l) => l.includes("extension prompt")).length;
   if (now > before6) break;
 }
-// The open input prompt resolves undefined on abort; the handler's later
-// prompts open normally and are answered here like the dialog would.
+// Abort retires the command itself, including later UI and exec calls.
+const renderer = await connectRenderer(process.env.E2E_CDP_PORT);
+await renderer.waitForDialog(true);
+writeFileSync(join(root, "prompt-active.png"), Buffer.from(await renderer.screenshot(), "base64"));
 const seen6 = new Set(readFileSync(logPath, "utf8").split("\n").map((l) => /"promptId":"([^"]+)"/.exec(l)?.[1]).filter(Boolean));
 await tool("pi_agent_abort", { sessionId });
-for (let i = 0; i < 40; i++) {
-  await sleep(250);
-  for (const line of readFileSync(logPath, "utf8").split("\n").filter((l) => l.includes("extension prompt"))) {
-    const m = /"promptId":"([^"]+)".*?"kind":"(input|select|confirm)"/.exec(line);
-    if (!m || seen6.has(m[1])) continue;
-    seen6.add(m[1]);
-    await tool("pi_desktop_invoke", { operation: "extensions/ui/respond", args: [{ promptId: m[1], value: answers[m[2]] }], confirm: true });
-  }
-  if (readFileSync(join(root, "hooks.log"), "utf8").includes("args=aborted")) break;
-}
+await renderer.waitForDialog(false);
+writeFileSync(join(root, "prompt-retired.png"), Buffer.from(await renderer.screenshot(), "base64"));
+renderer.close();
+check("Stop removes the extension dialog from the real renderer", true);
 let abortResult;
 try { abortResult = await Promise.race([abortRun, sleep(20000).then(() => "timeout")]); } catch (e) { abortResult = String(e); }
 const hooksAfterAbort = readFileSync(join(root, "hooks.log"), "utf8");
-// The handler's own log line is the product evidence; the command's reply can
-// trail it when the MCP session is busy, so it is reported but not asserted.
-check("abort dismissed the open prompt and the command finished", /greet undefined blue true args=aborted exec=exec-ok/.test(hooksAfterAbort), JSON.stringify(abortResult) + " " + hooksAfterAbort.split("\n").filter((l) => l.includes("args=aborted")).join(" | "));
+check("abort retires the command before later prompts and exec", abortResult?.ok === true && !hooksAfterAbort.includes("args=aborted"), JSON.stringify(abortResult));
+const after6 = readFileSync(logPath, "utf8").split("\n").map((l) => /"promptId":"([^"]+)"/.exec(l)?.[1]).filter(Boolean);
+check("aborted command publishes no additional prompts", after6.every((id) => seen6.has(id)));
 
 // 7) sendUserMessage goes through the Host-owned queue (D386) and runs a turn
 const queued = await invoke("extensions/commands/run", { sessionId, name: "queue", args: "" });
@@ -205,8 +215,7 @@ check("the session binding is persisted under the extension-agent id", boundProv
 // transport instead of a host adapter.
 await tool("pi_agent_prompt", { sessionId, content: "say hi through your own transport" });
 await waitForTurn(sessionId);
-const pluginTurn = await tool("pi_session_get", { id: sessionId });
-const pluginAssistant = [...(pluginTurn?.session?.messages ?? [])].reverse().find((m) => m.role === "assistant");
+const pluginAssistant = await waitForReply(sessionId, "say hi through your own transport");
 check("the plugin's own stream served the turn", /plugin-transport-ok/.test(pluginAssistant?.content ?? ""), pluginAssistant?.content);
 
 // registerProvider is the upstream compatibility alias: the same plugin-owned
@@ -217,8 +226,7 @@ const aliasLine = lastLine("agent_model setModel=");
 check("the alias registers the same plugin-owned shape", /setModel=true model=cc-alias-1 provider=extension-agent:/.test(aliasLine), aliasLine);
 await tool("pi_agent_prompt", { sessionId, content: "say hi through the alias" });
 await waitForTurn(sessionId);
-const aliasTurn = await tool("pi_session_get", { id: sessionId });
-const aliasAssistant = [...(aliasTurn?.session?.messages ?? [])].reverse().find((m) => m.role === "assistant");
+const aliasAssistant = await waitForReply(sessionId, "say hi through the alias");
 check("the alias provider's transport served the turn", /alias-transport-ok/.test(aliasAssistant?.content ?? ""), aliasAssistant?.content);
 
 console.log("RESULTS " + JSON.stringify(results));

@@ -12,6 +12,7 @@ import { api } from "../../../../lib/api";
 import {
   HOME_DRAFT_KEY,
   deleteComposerDraft,
+  draftFileReference,
   writeComposerDraft,
 } from "../../../../lib/composer-draft-cache";
 import {
@@ -119,7 +120,7 @@ export function useComposerAttachments({
       ];
       writeComposerDraft(draftKey, {
         text: nextText,
-        fileReferences: [...previousReferences, toDraftReference(reference)],
+        fileReferences: [...previousReferences, draftFileReference(reference)],
       });
       draft.applyEditorDraft(nextText, nextReferences, selectionStart + token.length);
       showToast(t, "chat.filesAttached", { count: 1 }, "success");
@@ -199,7 +200,7 @@ export function useComposerAttachments({
         text: nextText,
         fileReferences: [
           ...previousReferences,
-          ...chips.map((chip) => toDraftReference(chip.reference)),
+          ...chips.map((chip) => draftFileReference(chip.reference)),
         ],
       });
       const currentSessionId = useAppStore.getState().activeSessionId;
@@ -210,7 +211,7 @@ export function useComposerAttachments({
       }
       showToast(t, "chat.filesAttached", { count: chips.length }, "success");
     } catch (error) {
-      showErrorToast(t, error);
+      showErrorToast(error);
     } finally {
       pickerInFlight.current = false;
       setPasting(false);
@@ -289,7 +290,7 @@ export function useComposerAttachments({
           text: nextText,
           fileReferences: [
             ...previousReferences,
-            ...chips.map((chip) => toDraftReference(chip.reference)),
+            ...chips.map((chip) => draftFileReference(chip.reference)),
           ],
         });
         const currentSessionId = useAppStore.getState().activeSessionId;
@@ -307,7 +308,7 @@ export function useComposerAttachments({
           "success",
         );
       } catch (error) {
-        showErrorToast(t, error);
+        showErrorToast(error);
       } finally {
         setPasting(false);
       }
@@ -403,7 +404,7 @@ export function useComposerAttachments({
         text: nextText,
         fileReferences: [
           ...previousReferences,
-          ...chips.map((chip) => toDraftReference(chip.reference)),
+          ...chips.map((chip) => draftFileReference(chip.reference)),
         ],
       });
       const currentSessionId = useAppStore.getState().activeSessionId;
@@ -414,7 +415,7 @@ export function useComposerAttachments({
       }
       if (chips.length) showToast(t, "chat.filesAttached", { count: chips.length }, "success");
     } catch (error) {
-      showErrorToast(t, error);
+      showErrorToast(error);
     } finally {
       setPasting(false);
     }
@@ -446,7 +447,7 @@ export function useComposerAttachments({
         if (directory.path) await useAppStore.getState().activateProject(directory.path);
       }
     } catch (error) {
-      showErrorToast(t, error);
+      showErrorToast(error);
     }
   };
 
@@ -492,15 +493,6 @@ export function useComposerAttachments({
   };
 }
 
-function toDraftReference(reference: ComposerFileReference): ComposerDraftSnapshot["fileReferences"][number] {
-  return {
-    path: reference.path,
-    name: reference.name,
-    kind: reference.kind,
-    ...(reference.mimeType ? { mimeType: reference.mimeType } : {}),
-    ...(reference.token ? { token: reference.token } : {}),
-  };
-}
 
 function showToast(
   t: TFunction,
@@ -511,7 +503,7 @@ function showToast(
   useAppStore.getState().showToast(t(key, options), { variant });
 }
 
-function showErrorToast(t: TFunction, error: unknown): void {
+function showErrorToast(error: unknown): void {
   useAppStore
     .getState()
     .showToast(error instanceof Error ? error.message : String(error), { variant: "error" });

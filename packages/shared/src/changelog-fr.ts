@@ -2,9 +2,43 @@ import type { ChangelogEntry } from "./changelog.js";
 
 export const frEntries: ChangelogEntry[] = [
   {
+    "version": "0.15.10",
+    "date": "2026-09-28",
+    "highlights": [
+      "Les plugins de la marketplace s’affichent désormais dans un ordre aléatoire plutôt que par ordre alphabétique.",
+    ],
+  },
+
+  {
+    "version": "0.15.9",
+    "date": "2026-09-27",
+    "highlights": [
+      "Supprime les anciens fichiers d'aide au premier démarrage des paquets macOS DMG et ZIP.",
+    ],
+  },
+
+  {
+    "version": "0.15.6",
+    "date": "2026-09-23",
+    "highlights": [
+      "Activez la recherche native dans vos services DeepSeek, xAI et OpenAI existants sans modifier leurs paramètres de connexion.",
+      "Prend en charge GPT-6 Astra, Sol et Luna dans les catalogues de modèles OpenAI et ChatGPT/Codex.",
+    ],
+  },
+
+  {
+    "version": "0.15.5",
+    "date": "2026-09-23",
+    "highlights": [
+      "Prend en charge GPT-6 Astra, Sol et Luna dans les catalogues de modèles OpenAI et ChatGPT/Codex.",
+    ],
+  },
+
+  {
     "version": "0.15.2",
     "date": "2026-09-21",
     "highlights": [
+      "Générez et modifiez des images dans le chat, choisissez un modèle et créez des lots avec la compétence intégrée imagegen.",
       "L'activité des outils suit la largeur de la conversation et contient proprement les libellés longs.",
       "Les pièces jointes collées sont conservées même si le collage se termine après un changement de session.",
       "Le modèle par défaut sélectionné est conservé lors de la modification des fournisseurs, avec un repli sûr s'il est supprimé.",

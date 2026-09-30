@@ -21,7 +21,6 @@ const pluginRuntime = source("apps/desktop/electron/main/plugin-runtime.ts");
 const pluginMcp = source("apps/desktop/electron/main/plugin-mcp.ts");
 const sharedTimeouts = source("packages/shared/src/rpc-timeouts.ts");
 const hostTools = source("crates/host-core/src/tools/mod.rs");
-const hostPermissions = source("crates/host-core/src/permissions.rs");
 const hostToolBudget = source("crates/host-core/src/tool_budget.rs");
 const hostRpc = source("crates/host-core/src/rpc/mod.rs");
 
@@ -55,15 +54,37 @@ test("host-core dispatches through the shared dispatch deadline", () => {
   );
 });
 
-test("host-core budgets match their TypeScript mirrors", () => {
+test("the manual-compaction deadline outlasts the summary request it wraps", () => {
+  // The mirrored constants are the drift risk: if the sidecar raises its stream
+  // watchdog or its retry count, the shared deadline has to follow, otherwise
+  // Electron times out a compaction the sidecar is still working on (#795).
+  const providerRetry = source("packages/agent-runtime/src/provider-retry.ts");
+  const summaryInput = source("packages/agent-runtime/src/compaction-summary-input.ts");
+  const watchdog = constMs(providerRetry, "STREAM_IDLE_TIMEOUT_DEFAULT_MS");
+  const retries = constMs(summaryInput, "COMPACTION_SUMMARY_MAX_RETRIES");
+  const baseDelay = constMs(summaryInput, "COMPACTION_SUMMARY_RETRY_BASE_MS");
+  assert.equal(constMs(sharedTimeouts, "STREAM_IDLE_TIMEOUT_MS"), watchdog);
+  assert.equal(constMs(sharedTimeouts, "COMPACTION_SUMMARY_MAX_RETRIES"), retries);
+  // Doubling waits after the first attempt: base + 2*base + 4*base + ...
+  assert.equal(
+    constMs(sharedTimeouts, "COMPACTION_SUMMARY_RETRY_BUDGET_MS"),
+    baseDelay * (2 ** retries - 1),
+  );
+  // The constants can be right while the call site ignores them.
+  assert.match(
+    sharedTimeouts,
+    /method === "agent\.compact"[\s\S]{0,60}?AGENT_COMPACT_RPC_TIMEOUT_MS/,
+    "agent.compact must not fall back to the flat default deadline",
+  );
+});
+
+test("host-core execution budgets remain mirrored while approval has no deadline", () => {
   const hostDispatch = constMs(hostTools, "DESKTOP_TOOL_DISPATCH_TIMEOUT_MS");
   assert.equal(constMs(sharedTimeouts, "DESKTOP_TOOL_DISPATCH_TIMEOUT_MS"), hostDispatch);
-  assert.equal(
-    constMs(sharedTimeouts, "PERMISSION_TIMEOUT_MS"),
-    constMs(hostPermissions, "PERMISSION_TIMEOUT_MS"),
-  );
   assert.equal(
     constMs(sharedTimeouts, "TOOL_QUEUE_WAIT_MS"),
     constMs(hostToolBudget, "TOOL_QUEUE_WAIT_MS"),
   );
+  assert.doesNotMatch(sharedTimeouts, /PERMISSION_TIMEOUT_MS/);
+  assert.doesNotMatch(hostRpc, /PERMISSION_TIMEOUT_MS/);
 });

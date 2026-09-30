@@ -183,8 +183,9 @@ type PluginThemeContrib = {
  label: string;
  path: string; // relative `.css` file
  base?: "light" | "dark"; // palette the overrides layer on, default `dark`
- assets?: string[]; // 绝对路径的 png/jpg/jpeg/webp/avif/svg/woff2，总和上限 4 MB；
-                    // 命中的 `url()` 会被改写为 `plugin-asset://`
+ assets?: string[]; // 插件包内相对路径或绝对路径；png/jpg/jpeg/webp/avif/svg/woff2 白名单，总和上限 4 MB；
+                    // 相对路径在插件根目录内解析，拒绝路径穿越和 `node_modules`；
+                    // 命中的 `url()` 改写为 `plugin-asset://`
 };
 
 type PluginWindowAppearanceContrib = {
@@ -247,8 +248,17 @@ type PluginProviderModelContrib = {
  contextWindow?: number;
  maxTokens?: number;
  supportsImages?: boolean;
+ /** 模型可提供的规范思考档位，按声明顺序保留。 */
+ thinkingLevels?: string[];
+ /** 当该值存在于 `thinkingLevels` 时，新会话使用它。 */
+ defaultThinkingLevel?: string;
 };
 ```
+`thinkingLevels` 可选。宿主会裁剪条目、丢弃未知规范档位、去重，并保留剩余的声明顺序。
+缺失或不可用的列表会变成空绑定。只有当 `defaultThinkingLevel` 命中该模型列表中的归一化档位
+时才会保留；否则会被丢弃，普通绑定归一化会选择第一个可用档位。
+清单校验会拒绝非数组的 `thinkingLevels`、其中任何非字符串条目，或非字符串的
+`defaultThinkingLevel`；未知的字符串档位则会被接受并在归一化时丢弃。
 
 ## 5. 权限枚举
 
@@ -268,6 +278,7 @@ type PluginPermission =
  | "agent.prompt.inject"
  | "provider.register"
  | "net.fetch"
+ | "net.anyHost"
  | "shell.openExternal"
  | "mcp.server.local"
  | "mcp.server.remote"
@@ -348,6 +359,15 @@ type PluginNetDomains = string[]; // "api.example.com" 或 "*.example.com"
 [03-plugin-api.md](/zh-CN/spec/07-plugins/03-plugin-api) §3）。该权限已实现：
 连接被限定在 `manifest.net.domains` 之内，未被声明的主机会在传输被要求
 打开任何东西之前就被拒绝。
+
+### 5.3.1 net.anyHost —— 豁免通道
+
+`"net.anyHost"` 面向端点由用户填写（自建服务器、个人域名等清单无法提前
+写明）的插件。持有该权限后，上述所有出网路径都对任意 http(s)/ws(s) 主机
+放行 —— 云元数据端点（`169.254.169.254` 等）除外，授权永远到不了那里：
+它们的应答是实例凭据。`net.domains` 已声明的主机保持现有行为，存量清单
+不受影响；未持有该权限的插件同样零变化。它与其他权限一样在安装/更新
+确认页展示，请求时不再有任何弹窗。
 
 ## 5. 1 总线主题语法
 

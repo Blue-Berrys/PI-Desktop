@@ -9,7 +9,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const LOCALE_IDS = ["en", "zh-CN", "zh-TW", "de", "es", "fr", "ko", "tr"];
+const LOCALE_IDS = ["en", "zh-CN", "zh-TW", "de", "es", "fr", "ko", "tr", "pt-BR"];
 
 /** The label every locale arms its delete item with. */
 const CONFIRM_LABELS = {
@@ -21,6 +21,7 @@ const CONFIRM_LABELS = {
   fr: "Supprimer ?",
   ko: "삭제할까요?",
   tr: "Silinsin mi?",
+  "pt-BR": "Excluir?",
 };
 
 const read = (path) => readFile(new URL(path, import.meta.url), "utf8");
@@ -132,7 +133,7 @@ test("both delete labels ship in every catalog and read the same", () => {
     const source = catalogs.get(id);
     const expected = CONFIRM_LABELS[id];
     assert.equal(blockValue(catalogBlock(source, "nav", "sessionCollaboration"), "deleteTaskConfirm"), expected, id);
-    assert.equal(blockValue(catalogBlock(source, "project", "pulls"), "deleteMenuConfirm"), expected, id);
+    assert.equal(blockValue(catalogBlock(source, "project", "scheduled"), "deleteMenuConfirm"), expected, id);
     if (id !== "en") {
       assert.notEqual(expected, CONFIRM_LABELS.en, `${id} is translated`);
     }

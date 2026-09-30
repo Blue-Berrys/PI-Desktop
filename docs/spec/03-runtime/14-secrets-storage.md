@@ -91,6 +91,11 @@ Renderer uses provider methods that accept optional `secretValue` on create/upda
 5. Uninstall/reset app deletes secrets unless future explicit migrate tool says otherwise
 6. Provider delete defaults to deleting linked secret — both the API key and the OAuth credential
 7. An OAuth refresh token never crosses a process boundary: only Electron main reads it, and only to mint request auth
+8. Portable configuration sync exports provider API keys or MCP
+   environment/header values only after explicit credential opt-in. Values
+   remain inside host-owned encrypted staging and are restored through the
+   receiving device's local secret store. WebDAV credentials, machine
+   encryption keys, OAuth sessions, and cookies are never portable.
 
 ## 7. Redaction policy
 
@@ -133,6 +138,14 @@ because pi-ai declares it app-owned. `oauth.ts` implements pi-ai's
 assumption holds across concurrent turns. Each OAuth provider row gets its own
 collection and store scope; two rows with the same vendor key never share a
 credential or refresh lock.
+
+Pi login receives an installation context whose `getDeviceId` returns one stable
+UUID v4. Electron main creates it lazily, shares concurrent initialization, and
+persists it through Host secrets under `secret:installation:oauth-device-id`
+before exposing it to the flow. It is independent of provider accounts and
+survives cancellation, account deletion, and service restart. Initialization
+failures remain retryable and use a redacted error. The identity never enters
+provider rows, portable configuration, renderer events, or ordinary diagnostics.
 
 Request auth flows one way only:
 

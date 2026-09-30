@@ -33,8 +33,8 @@ destination, chat as the home surface, tools and permissions inline.
   **Sessions** section with new-session and sort actions, retained open-project
   groups under a following **Projects** section with a persistent new-project
   action, and the WorkBuddy-inspired footer. The footer keeps compact Settings,
-  Extensions, Scheduled (clock), and notification icon actions; Pull requests
-  remains omitted from the home sidebar. Each retained project is a
+  Extensions, Scheduled (clock), and notification icon actions. Each retained
+  project is a
   path-keyed tab/group that can be
   collapsed independently. Project and conversation rows expose
   non-destructive pin/archive actions, an independent conversation-branch
@@ -148,7 +148,8 @@ destination, chat as the home surface, tools and permissions inline.
   rectangle continues to position the native Browser view. Native window edges
   resize the app window only; they do not change the panel target. The outer
   window remains natively resizable from all OS edges and corners, with a
-  minimum supported size of 1040×700. Replaces
+  minimum supported size of 800×560, capped to the current display's work
+  area (D635). Replaces
   the former context-panel overlay; workspace/model/status info lives in the
   composer chips and Settings instead.
 - **Composer**: workspace-agnostic floating pill anchored to the conversation
@@ -221,6 +222,10 @@ destination, chat as the home surface, tools and permissions inline.
   delete remain separate actions. Rename edits the task label only; archive
   never removes the transcript. Open folder is a project action, not a
   conversation action.
+- **Temporary-task attachments**: selecting a saved attachment opens its file
+  preview even without an open project. Back returns to the no-project browsing
+  state. Branches preserve referenced pasted/imported inputs as child-owned
+  copies; deleting the source task does not break these previews.
 - **Sort**: user-facing modes are Recently updated, Created date, Oldest
   first, and Name. Pinned rows precede unpinned rows. Project groups switch
   to `manual` by dragging a title or using ArrowUp/ArrowDown on that
@@ -238,14 +243,9 @@ destination, chat as the home surface, tools and permissions inline.
   session and never change the active session, page, project, or keyboard
   focus.
 
-### 3.3 Pull requests
-Segmented Open/Draft/All filters with counts; rows carry icon plate, number,
-title, status badge, branch meta, external link, and "Review with agent"
-(creates a chat turn). Requires an active workspace and `gh`.
-
-### 3.4 Scheduled
+### 3.3 Scheduled
 Tasks and Run history views, with an explicit create/edit form, a cadence dropdown, time,
-next occurrence, saved project, pause/resume and delete confirmation. Hourly
+next occurrence, saved project, per-task permission/model selection, pause/resume and delete confirmation. Hourly
 schedules repeat at one-hour intervals without a time selector. Daily schedules
 use a themed time-period dropdown: Morning 09:00, Afternoon 14:00, Evening
 19:00, Night 22:00. The form does not expose hour/minute editing. AI tools may
@@ -265,9 +265,25 @@ occurrences more than 90 seconds late or overlapping a running task. Startup
 rearms future occurrences only. Hourly schedules wait a full hour after saving,
 enabling, startup or the preceding automatic admission; Run now leaves the
 automatic occurrence unchanged. Legacy cadence-only tasks require explicit
-schedule configuration. The current project is captured when first configured;
-subsequent foreground project changes do not retarget it. Automatic runs use
-Ask permissions and may wait for input in their conversation.
+schedule configuration. New tasks explicitly save the selected project, Ask
+permission mode and the current default provider/model. Each selector writes only
+to that task. The prompt is labelled Instruction, and these three selectors sit
+inside its bottom toolbar using the same shell, chip and anchored-menu treatment
+as the main Composer. Both surfaces render the same controlled permission picker
+and searchable, provider-grouped model list with capability badges. The task model
+chip displays the model name or alias without a provider prefix. Task selection
+callbacks update only the task draft, never the active conversation or app defaults.
+The instruction input has its own rounded border and tonal
+background above the toolbar, with no native resize handle; longer text scrolls
+inside the input. Existing tasks without provider/model fields continue following the
+app defaults; unavailable saved models remain visible and are not silently replaced.
+Selecting Auto warns that restricted actions may run without asking. The current
+project is captured when first configured when no explicit selection exists;
+subsequent foreground project changes do not retarget it. This includes Manual
+tasks and tasks saved without a project: Run now, renaming, and cadence changes
+preserve that binding, including after restart. Only legacy tasks without a saved
+binding capture the current project on their first explicit configuration. Legacy automatic
+runs without a saved permission mode use Ask and may wait for input in their conversation.
 New tasks default to Agent. A migrated Plan or Goal task is allowed to remain
 stored, but an unattended run is explicitly rejected before provider, artifact,
 or queue work with `PLAN_REQUIRES_INTERACTIVE_SESSION`; it cannot display or
@@ -275,7 +291,12 @@ auto-approve a contract.
 The user must explicitly switch it to Agent before enabling unattended
 execution.
 
-### 3.5 Extensions
+Agent tools can change a Manual task to Hourly by supplying only its id and
+`cadence: "hourly"`; no calendar time is required. Preserve existing schedule
+fields and paused state. Daily and Weekly still require a valid saved or supplied
+schedule. Renaming an Hourly task does not restart its interval.
+
+### 3.4 Extensions
 
 The Extensions destination is a focused plugin surface with a compact header and
 only two tabs: **Installed** and **Marketplace**. Installed groups plugin rows
@@ -288,8 +309,8 @@ marketplace source settings show the source selector without a redundant
 provider explanation or active-source status line. MCP, Skills, and Subagents
 are not tabs or sections of Extensions.
 
-### 3.6 Settings (full-page takeover)
-### 3.6 Settings (full-page takeover)
+### 3.5 Settings (full-page takeover)
+### 3.5 Settings (full-page takeover)
 Settings replaces the whole shell (D063): back-to-app + search + a grouped
 settings rail with concise, parallel destination labels. The Agent group
 contains independent Skills, MCP, and Subagents destinations alongside
@@ -308,7 +329,7 @@ and skips subscription logins. Project archive owns the durable D086 Projects in
 archived records. Opening or switching a project retains a sidebar tab, selects
 that project as the active workspace, and returns to chat. Other retained tabs
 stay open. Extension management remains solely on the app shell's independent
-Extensions destination described in §3.5. Settings > Agent has the following
+Extensions destination described in §3.4. Settings > Agent has the following
 shared capability contract:
 
 - Each capability destination starts with a quiet localized description and
@@ -348,7 +369,7 @@ shared capability contract:
 
 ## 5. Navigation model
 
-- `page` state: `chat | pulls | scheduled | plugins | settings`; `chat` is the
+- `page` state: `chat | scheduled | plugins | settings`; `chat` is the
   conversation-surface route, not an operating mode. The project
   archive is the `projects` settings tab rather than a standalone page.
 - Destination history is linear; `Cmd/Ctrl+[` and `Cmd/Ctrl+]` traverse it
@@ -391,8 +412,8 @@ shared capability contract:
 
 - No provider configured → blocking guidance toward Settings before first run
   (`MODEL_NOT_CONFIGURED`).
-- No workspace → home hero without project underline; Pull requests shows a
-  workspace-required empty state. The composer never renders a workspace rail.
+- No workspace → home hero without project underline. The Composer never
+  renders a workspace rail.
 - Background project session → the originating project row retains its
   running/error indicator. Selected shell state can move independently while
   the session tool root remains bound to its durable project; its artifacts are
@@ -400,7 +421,7 @@ shared capability contract:
   tabs over the currently selected project. Messages, tool events, permission
   requests, and panel resources remain scoped to that session. Explicitly
   opening the conversation restores its retained panel context and reveals any
-  pending permission card with its original deadline.
+  pending permission card, which remains actionable without a deadline.
 - Completed/failed turn not already visible → host-core appends one durable
   inbox row. A result shown in the visible, focused current chat and every
   `aborted` turn append none. Background sessions and any turn finishing while

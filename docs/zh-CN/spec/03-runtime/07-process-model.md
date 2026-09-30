@@ -57,13 +57,22 @@ queued/running `plan_approvals` 执行状态已中断并中止它们
 跑步轮流。此内部进程纪元栅栏未序列化或发送
 协议。
 
+渲染器的 bootstrap 本身没有超时，因此由渲染器自己监视对首个状态的等待。到达
+`STARTUP_SLOW_HINT_MS`（30 秒）时，启动表面在不判定启动失败的前提下加上日志、
+诊断与退出；到达 `STARTUP_STALLED_MS`（180 秒）时它变成恢复表面，并额外提供
+重试。两个界限都高于 main↔host 的 RPC 上限（`DEFAULT_RPC_TIMEOUT_MS`，130 秒），
+因此慢但成功的启动永远不会被报告为失败。看门狗从不取消它所监视的启动：成功完成
+的启动会用 shell 替换该表面，恢复表面则替换启动画面。渲染器绘制的窗口控制按钮
+保持在该表面之上，因此无边框的 Windows/Linux 窗口始终可以关闭；从该表面退出走
+渲染器退出通道（`pi-desktop/app/quit`），它与“退出”菜单项执行同一套有序关停。
+
 ## 4. 崩溃策略
 
 | 崩溃 | 政策 |
 |---|---|
 | Renderer 崩溃 | 重新加载窗口，保留 host/agent 进程；同一主机重新加载仅恢复实时待处理的 Plan/Goal 批准及其截止日期，而不是终端卡 |
 | Rust 主机崩溃 | 将应用程序标记为降级、中断 pending/queued/running 审批工作、将待处理会话保留在其合同模式（Plan 或 Goal）中并将已批准的会话保留在 Agent 中、尝试重新启动主机并关闭活动会话失败 |
-| Node 代理崩溃 | 中止活动轮次和实时批准 waiters/queue 条目，在合同模式下保留待处理会话，在 Rust 中保留已批准的 Agent 模式，重新启动 sidecar，并且从不重播执行 |
+| Node 代理崩溃 | 中止活动轮次和实时批准 waiters/queue 条目，在合同模式下保留待处理会话，在 Rust 中保留已批准的 Agent 模式，重新启动 sidecar，并且从不重播执行；sidecar 退出时对其 stderr 尾部做分类——V8 堆耗尽横幅使所属回合以 `AGENT_SIDECAR_OOM` 收尾，其他意外退出以 `AGENT_SIDECAR_CRASHED` 收尾（issue #1077） |
 | Electron 主要崩溃 | 完整的应用程序退出 |
 
 Crashpad 在 `ready` 之前以本地模式启动（`uploadToServer: false`），转储放在
@@ -113,6 +122,10 @@ Windows 安装包目标为 x64。Windows host-core 使用
 监管参数（传输、重启策略与回合生命周期位于 `packages/host-runtime`，ADR 0284；Electron main 适配它们并负责面向渲染层的状态）：
 
 - 子进程退出立即拒绝该子进程的所有正在进行的 RPC（无 130 秒超时等待）。
+- 每个 RPC 都带有有限的传输超时。Bash 与桌面分发的（`plugin_*` / `mcp_*`）工具会
+  叠加 host-core 在报告结果前可能消耗的等待，`agent.compact` 则叠加 sidecar 自身的摘要
+  预算——每次尝试的流空转看门狗加上重试退避（**D614**，issue #795）；其余调用使用 130
+  秒默认值。绝不要为了迁就某个慢方法而放宽默认值：那会同时掩盖其他调用上真正丢失的回复。
 - 超过 64 MiB 的 NDJSON 请求行以 `LIMIT_EXCEEDED` 应答，不结束 stdin 读取器（ADR 0216）。Electron 在写入 stdin 前拒绝同样大小的载荷（ADR 0217）。
 - Windows Alt+Space 钩子只保留 stdout 发送端的弱引用。stdin EOF 后 serve 丢弃最后一个强引用，host-core 退出；泄漏的发送端不能把关闭卡住超过 5 秒（ADR 0217）。
 - 使用指数退避 `0.5s → 1s → 2s` 自动重启（上限 4 秒）。
@@ -203,9 +216,13 @@ sidecar/host 关闭序列在更新程序替换应用程序之前运行。
   它调用的纯 JS 助手无需更改进程或协议所有权
 - 渲染器依赖项通过 Vite 输出传送，而不是重复原始数据
   包树；桌面包不再携带交互式 PTY 原生模块
-- 打包版本使用 Main 拥有的更新控制器。 macOS、非 AppImage
-  Linux 和 Windows 便携版运行为手动交付模式； Windows NSIS 和
-  Linux AppImage 使用 D126 标签发布的应用内提要
+- 打包版本使用 Main 拥有的更新控制器，并使用按安装实例持久化的
+  `updatePreference`。自动模式在受支持的包上保持现有应用内下载/安装流程；手动模式
+  继续检查固定稳定版更新，但不自动下载或退出安装，并对每个可用版本只提醒一次。
+  Windows NSIS、已打包 macOS 和 Linux AppImage 默认自动；Windows ZIP/便携版，以及
+  不支持自动安装的包默认手动。Windows ZIP/便携版可在确认 NSIS 可能替换解压副本的
+  警告后明确选择自动。偏好和最近提醒版本保存在 Host 所有的应用设置 JSON 中，且不会
+  进入便携配置同步。
 
 ## 7. 远程目标拓扑（MVP 后）
 

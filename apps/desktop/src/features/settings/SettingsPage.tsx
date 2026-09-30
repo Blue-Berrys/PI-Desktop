@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import type {
   AppSettings,
@@ -30,8 +30,10 @@ import {
   IconServer,
   IconSliders,
   IconSparkles,
+  IconCloudDown,
+  IconMic,
 } from "../../components/icons";
-import { Badge, Button, cx } from "../../components/ui";
+import { Badge, Button, cx, SegmentedControl, SettingsToggle } from "../../components/ui";
 import { ModelConfigPage } from "../../components/settings/ModelConfigPage";
 import { KeyboardShortcutsSection } from "../../components/settings/KeyboardShortcutsSection";
 import { FontFamilyRow } from "../../components/settings/FontFamilyRow";
@@ -46,6 +48,7 @@ import { AgentSkillsPage } from "../../components/settings/AgentSkillsPage";
 import { AgentMcpPage } from "../../components/settings/AgentMcpPage";
 import { AgentSubagentsPage } from "../../components/settings/AgentSubagentsPage";
 import { RemoteHostsPage } from "../../components/settings/RemoteHostsPage";
+import { VoiceSettingsSection } from "./voice/VoiceSettingsSection";
 import {
   CommandShellRow,
   ContextUsageDisplayRow,
@@ -59,6 +62,7 @@ import { ImportSection } from "./import-page";
 import { PromptEnhancementCard } from "./prompt-enhancement-card";
 import { CloseBehaviorSection, DeveloperSection } from "./developer-sections";
 import { PluginScenicThemesDestination } from "../../components/settings/PluginScenicThemesDestination";
+import { ConfigSyncPage } from "../../components/settings/ConfigSyncPage";
 
 type SettingsTab = ReturnType<typeof useAppStore.getState>["settingsTab"];
 
@@ -68,6 +72,7 @@ type NavItem = {
   titleKey: string;
   icon: ReactNode;
   group: SettingsNavGroupId;
+  experimentalBadgeKey?: string;
   /** i18n keys of the rows inside the tab; search matches their translations. */
   keywordKeys: string[];
 };
@@ -77,6 +82,7 @@ export function SettingsPage() {
   const tab = useAppStore((s) => s.settingsTab);
   const setSettingsTab = useAppStore((s) => s.setSettingsTab);
   const settingsAnchor = useAppStore((s) => s.settingsAnchor);
+  const settingsTabNonce = useAppStore((s) => s.settingsTabNonce);
   const setSettingsAnchor = useAppStore((s) => s.setSettingsAnchor);
   const setPage = useAppStore((s) => s.setPage);
   const settings = useAppStore((s) => s.settings);
@@ -84,17 +90,47 @@ export function SettingsPage() {
   const refreshProviders = useAppStore((s) => s.refreshProviders);
   const platform = (window.piDesktop?.platform ?? "darwin") as ShortcutPlatform;
 
-  // Developer-only destinations (Remote Hosts) exist only while developer
-  // mode is on; the rail, the page, and settings search drop them together.
+  // Experimental feature surfaces remain available in development builds only.
+  const includeDevelopmentOnly = import.meta.env.DEV;
   const developerMode = settings?.developerMode === true;
-  const navEntries = useMemo(() => visibleSettingsNav(developerMode), [developerMode]);
-  const tabHidden = isSettingsDestinationHidden(tab, developerMode);
+  const navEntries = useMemo(
+    () => visibleSettingsNav(developerMode, includeDevelopmentOnly),
+    [developerMode, includeDevelopmentOnly],
+  );
+  const tabHidden = isSettingsDestinationHidden(
+    tab,
+    developerMode,
+    includeDevelopmentOnly,
+  );
 
   const [query, setQuery] = useState("");
   const [recoveringSettings, setRecoveringSettings] = useState(!settings);
   const [settingsRecoveryFailed, setSettingsRecoveryFailed] = useState(false);
   const [extensions, setExtensions] = useState<PluginScenicThemesDestinationMeta[]>([]);
   const [activeExtension, setActiveExtension] = useState<PluginScenicThemesDestinationMeta | null>(null);
+  const seenSettingsTabNonce = useRef(settingsTabNonce);
+  // setSettingsTab means "show this built-in category", even when the tab id
+  // does not change. Dismiss a plugin page before paint; an anchor-only deep
+  // link has to do the same or the row lookup hits the plugin instead.
+  if (
+    seenSettingsTabNonce.current !== settingsTabNonce ||
+    (activeExtension && settingsAnchor)
+  ) {
+    seenSettingsTabNonce.current = settingsTabNonce;
+    if (activeExtension) setActiveExtension(null);
+  }
+  const contentRef = useRef<HTMLDivElement>(null);
+  const settingsSearchRef = useRef<HTMLInputElement>(null);
+  const destination = activeExtension ? `extension:${activeExtension.ref}` : `builtin:${tab}`;
+
+  useLayoutEffect(() => {
+    settingsSearchRef.current?.focus({ preventScroll: true });
+  }, []);
+
+  useLayoutEffect(() => {
+    // Reset before paint and before the search-anchor effect positions its row.
+    if (contentRef.current) contentRef.current.scrollTop = 0;
+  }, [destination]);
 
   useEffect(() => {
     const refresh = () => void api.listPluginScenicThemesDestinations().then(setExtensions, () => setExtensions([]));
@@ -110,8 +146,8 @@ export function SettingsPage() {
   }, [activeExtension, extensions, setSettingsTab]);
 
   // A hidden destination must not keep rendering: leave the page the rail no
-  // longer offers (for example Remote Hosts once developer mode is switched
-  // off) and fall back to General.
+  // longer offers (for example Cloud sync or Remote Hosts after developer mode
+  // is switched off) and fall back to General.
   useEffect(() => {
     if (!settings || !tabHidden) return;
     setSettingsTab("general");
@@ -136,10 +172,12 @@ export function SettingsPage() {
   }, [settings, recoverSettings]);
 
   // Arriving from the global search dialog: scroll to and flash the row
-  // whose title matches the pending anchor key. Rows are located by their
-  // translated title so async tab content (providers, import) needs no
-  // per-row wiring; a short retry window covers late mounts.
-  useEffect(() => {
+  // whose title matches the pending anchor key. This runs after the
+  // destination reset and before paint, so a category change does not flash
+  // the top. Rows are located by their translated title so async tab content
+  // (providers, import) needs no per-row wiring; a short retry window covers
+  // late mounts.
+  useLayoutEffect(() => {
     if (!settingsAnchor) return;
     const target = t(settingsAnchor).trim();
     let cancelled = false;
@@ -204,7 +242,9 @@ export function SettingsPage() {
       subagents: <IconBot size={14} />,
       import: <IconDownload size={14} />,
       projects: <IconArchive size={14} />,
+      sync: <IconCloudDown size={14} />,
       remoteHosts: <IconGlobe size={14} />,
+      voice: <IconMic size={14} />,
       about: <IconInfo size={14} />,
     };
     return navEntries.map((entry) => ({
@@ -213,6 +253,7 @@ export function SettingsPage() {
       titleKey: entry.titleKey,
       icon: iconFor[entry.id],
       group: entry.group,
+      experimentalBadgeKey: entry.experimentalBadgeKey,
       keywordKeys: entry.keywordKeys,
     }));
   }, [navEntries]);
@@ -242,8 +283,8 @@ export function SettingsPage() {
     return [...groups.entries()].map(([id, items]) => ({ id, items }));
   }, [filteredItems]);
 
-  const activeTitleKey =
-    navItems.find((item) => item.id === tab)?.titleKey ?? "settings.title";
+  const activeNavItem = navItems.find((item) => item.id === tab);
+  const activeTitleKey = activeNavItem?.titleKey ?? "settings.title";
   const tabNeedsSettings = ["general", "ai", "shortcuts", "agent"].includes(tab);
 
   return (
@@ -254,6 +295,7 @@ export function SettingsPage() {
           <div className="settings-search-wrap no-drag">
             <IconSearch size={14} />
             <input
+              ref={settingsSearchRef}
               className="settings-search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
@@ -286,9 +328,9 @@ export function SettingsPage() {
                   >
                     <span className="settings-nav-icon">{item.icon}</span>
                     <span className="settings-nav-label">{t(item.labelKey)}</span>
-                    {item.id === "remoteHosts" ? (
+                    {item.experimentalBadgeKey ? (
                       <Badge tone="warning" className="settings-nav-experimental">
-                        {t("settings.remoteHosts.experimental")}
+                        {t(item.experimentalBadgeKey)}
                       </Badge>
                     ) : null}
                   </button>
@@ -335,13 +377,13 @@ export function SettingsPage() {
         </div>
       </aside>
 
-      <div className="settings-content">
+      <div className="settings-content" ref={contentRef}>
         <div className="settings-content-inner">
           <div className="settings-content-enter">
           <h1 className="settings-section-title">
             <span>{activeExtension?.label ?? t(activeTitleKey)}</span>
-            {!activeExtension && tab === "remoteHosts" && !tabHidden ? (
-              <Badge tone="warning">{t("settings.remoteHosts.experimental")}</Badge>
+            {!activeExtension && activeNavItem?.experimentalBadgeKey ? (
+              <Badge tone="warning">{t(activeNavItem.experimentalBadgeKey)}</Badge>
             ) : null}
           </h1>
 
@@ -378,6 +420,31 @@ export function SettingsPage() {
 
               <NetworkProxySection settings={settings} saveSettings={saveSettings} />
 
+              <SettingsCard title={t("settings.power")}>
+                <SettingsRow
+                  title={t("settings.keepAwakeWhileRunning")}
+                  description={t("settings.keepAwakeWhileRunningDesc")}
+                >
+                  <SettingsToggle
+                    checked={settings.keepAwakeWhileRunning === true}
+                    label={t("settings.keepAwakeWhileRunning")}
+                    onChange={() => void saveSettings({
+                      keepAwakeWhileRunning: settings.keepAwakeWhileRunning !== true,
+                    })}
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  title={t("settings.preventScreenSleep")}
+                  description={t("settings.preventScreenSleepDesc")}
+                >
+                  <SettingsToggle
+                    checked={settings.preventScreenSleep === true}
+                    label={t("settings.preventScreenSleep")}
+                    onChange={() => void saveSettings({ preventScreenSleep: !settings.preventScreenSleep })}
+                  />
+                </SettingsRow>
+              </SettingsCard>
+
               {platform !== "darwin" && <CloseBehaviorSection />}
             </div>
           )}
@@ -412,30 +479,17 @@ export function SettingsPage() {
 
               <SettingsCard title={t("settings.defaultsTitle")}>
                 <SettingsRow title={t("settings.mode")} description={t("settings.modeDesc")}>
-                  <div
-                    className="settings-segment"
+                  <SegmentedControl
+                    value={settings.defaultMode ?? "agent"}
+                    onChange={(value) => void saveSettings({ defaultMode: value })}
+                    options={[
+                      { value: "agent", label: t("settings.modeAgent") },
+                      { value: "plan", label: t("settings.modePlan") },
+                      { value: "goal", label: t("settings.modeGoal") },
+                    ]}
+                    label={t("settings.mode")}
                     role="group"
-                    aria-label={t("settings.mode")}
-                  >
-                    {([
-                      ["agent", "settings.modeAgent"],
-                      ["plan", "settings.modePlan"],
-                      ["goal", "settings.modeGoal"],
-                    ] as const).map(([value, labelKey]) => (
-                      <button
-                        key={value}
-                        type="button"
-                        className={cx(
-                          "settings-segment-item",
-                          settings.defaultMode === value && "active",
-                        )}
-                        aria-pressed={settings.defaultMode === value}
-                        onClick={() => void saveSettings({ defaultMode: value })}
-                      >
-                        {t(labelKey)}
-                      </button>
-                    ))}
-                  </div>
+                  />
                 </SettingsRow>
                 <CommandShellRow settings={settings} saveSettings={saveSettings} />
                 <LinkOpenTargetRow settings={settings} saveSettings={saveSettings} />
@@ -448,40 +502,31 @@ export function SettingsPage() {
                   title={t("settings.enterToSend")}
                   description={t("settings.enterToSendDesc")}
                 >
-                  <button
-                    type="button"
-                    className={cx("settings-toggle", settings.enterToSend && "on")}
-                    role="switch"
-                    aria-checked={settings.enterToSend}
-                    aria-label={t("settings.enterToSend")}
-                    onClick={() =>
-                      void saveSettings({ enterToSend: !settings.enterToSend })
-                    }
-                  >
-                    <span className="settings-toggle-thumb" />
-                  </button>
+                  <SettingsToggle
+                    checked={settings.enterToSend}
+                    label={t("settings.enterToSend")}
+                    onChange={() => void saveSettings({ enterToSend: !settings.enterToSend })}
+                  />
                 </SettingsRow>
                 <SettingsRow
                   title={t("settings.infiniteProviderRetry")}
                   description={t("settings.infiniteProviderRetryDesc")}
                 >
-                  <button
-                    type="button"
-                    className={cx(
-                      "settings-toggle",
-                      settings.infiniteProviderRetry === true && "on",
-                    )}
-                    role="switch"
-                    aria-checked={settings.infiniteProviderRetry === true}
-                    aria-label={t("settings.infiniteProviderRetry")}
-                    onClick={() =>
-                      void saveSettings({
-                        infiniteProviderRetry: settings.infiniteProviderRetry !== true,
-                      })
-                    }
-                  >
-                    <span className="settings-toggle-thumb" />
-                  </button>
+                  <SettingsToggle
+                    checked={settings.infiniteProviderRetry === true}
+                    label={t("settings.infiniteProviderRetry")}
+                    onChange={() => void saveSettings({ infiniteProviderRetry: settings.infiniteProviderRetry !== true })}
+                  />
+                </SettingsRow>
+                <SettingsRow
+                  title={t("settings.smoothStreaming")}
+                  description={t("settings.smoothStreamingDesc")}
+                >
+                  <SettingsToggle
+                    checked={settings.smoothStreaming !== false}
+                    label={t("settings.smoothStreaming")}
+                    onChange={() => void saveSettings({ smoothStreaming: !(settings.smoothStreaming !== false) })}
+                  />
                 </SettingsRow>
                 <LargePasteThresholdRow
                   settings={settings}
@@ -494,6 +539,14 @@ export function SettingsPage() {
                 saveSettings={saveSettings}
               />
             </div>
+          )}
+
+          {tab === "voice" && !tabHidden && settings && (
+            <VoiceSettingsSection
+              t={t}
+              settings={settings}
+              saveSettings={saveSettings}
+            />
           )}
 
           {tab === "shortcuts" && settings && (
@@ -519,6 +572,8 @@ export function SettingsPage() {
           {tab === "import" && <ImportSection />}
 
           {tab === "projects" && <ProjectsPage />}
+
+          {tab === "sync" && !tabHidden && <ConfigSyncPage />}
 
           {tab === "remoteHosts" && !tabHidden && <RemoteHostsPage />}
 
@@ -551,7 +606,11 @@ export function SettingsPage() {
                     {t("settings.openFeedback")}
                   </Button>
                 </SettingsRow>
-                <UpdatesRow currentVersion={version?.version} />
+                <UpdatesRow
+                  currentVersion={version?.version}
+                  settings={settings ?? null}
+                  saveSettings={saveSettings}
+                />
               </SettingsCard>
 
               {settings && (

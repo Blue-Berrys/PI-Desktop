@@ -1,5 +1,7 @@
 /** Shared public types grouped by the owning application domain. */
 import type { Mode } from "./common.js";
+import type { GlobalPermissionMode } from "./permissions.js";
+import type { SessionThinkingLevel } from "./models.js";
 
 export type AppVersionInfo = {
   name: string;
@@ -33,12 +35,13 @@ export type HostStatusEvent = {
   archMismatch?: { platform: string; processArch: string; machineArch: string };
 };
 
+/** User-selected update behavior; unsupported installers remain manual. */
+export type UpdatePreference = "automatic" | "manual";
+
 /**
- * How app updates are delivered on this install:
- *  - in-app: electron-updater downloads and installs (Windows NSIS, Linux
- *    AppImage, packaged macOS)
- *  - manual: we only detect new versions and link to the releases page
- *    (Linux deb/rpm, Windows portable)
+ * Effective update delivery on this install:
+ *  - in-app: electron-updater downloads and installs
+ *  - manual: detect versions and link to the releases page
  *  - disabled: development / unpackaged build
  */
 export type UpdateMode = "in-app" | "manual" | "disabled";
@@ -55,6 +58,11 @@ export type UpdateStatus =
 /** Snapshot pushed on the `updatesState` event and returned by updates IPC. */
 export type UpdateState = {
   mode: UpdateMode;
+  preference: UpdatePreference;
+  defaultPreference: UpdatePreference;
+  automaticSupported: boolean;
+  /** Manual-mode banner is shown once for each discovered version. */
+  manualReminder?: boolean;
   status: UpdateStatus;
   currentVersion: string;
   availableVersion?: string;
@@ -112,4 +120,9 @@ export type ScheduledTask = {
   schedule?: ScheduledTaskSchedule | null;
   nextRunAt?: string;
   workspacePath?: string;
+  /** Explicit task-owned execution settings. Missing fields preserve legacy behavior. */
+  permissionMode?: GlobalPermissionMode;
+  thinkingLevel?: SessionThinkingLevel;
+  providerId?: string;
+  modelId?: string;
 };

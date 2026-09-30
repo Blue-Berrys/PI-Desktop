@@ -65,6 +65,7 @@ to an absolute path before it reaches host-core as a child-process variable.
  │    ├── <sessionId>.revisions.jsonl # regenerate branches, append-only
  │    └── <sessionId>.inflight.json   # streaming reply checkpoint (D299), transient
  ├── secrets/             # encrypted secret blobs + .machine-key (unchanged)
+ ├── config-sync/         # encrypted sync base/pending bundles — host-core only
  ├── attachments/         # content-addressed blobs (sha256 name), refs from messages
  ├── plugins/             # code + data + registry.json (unchanged, spec 07-11)
  ├── logs/                # NDJSON app/<category>, host/<category>, agent/<category> logs
@@ -88,6 +89,15 @@ turn + artifact in one commit). The DB stores **no large payloads**: message
 content lives in `sessions/`, attachments and tool outputs beyond the limits
 of [16-tool-result-limits](16-tool-result-limits.md) live on disk, referenced
 by path/hash.
+
+### 1.3 Portable configuration sync
+
+Host-core stores sync configuration in the `configSync` key-value namespace.
+The vault key reference and WebDAV password use the existing encrypted secret
+store. `config-sync/base.bin` and `config-sync/pending.bin` are authenticated
+encrypted bundles replaced with temp-file rename; they are not renderer- or
+sidecar-readable files. Sync revisions and resources remain remote immutable
+objects and do not change the SQLite schema or transcript retention.
 
 ### 2.0 Message-owned review snapshots (ADR 0043)
 
@@ -532,6 +542,12 @@ CREATE INDEX idx_session_import_origins_plugin
   message. Assistant Edit uses that child and records the original/edited
   response tails in the child's existing `message_revisions` store; the source
   transcript and source revisions are never rewritten.
+- Forks copy existing referenced files from `scratch/<sourceId>/pasted/` to
+  `scratch/<childId>/pasted/` and rewrite message/checkpoint paths before
+  indexing. Source deletion cannot remove the child copies. Unreferenced files,
+  later-message inputs outside a bounded fork, and other scratch outputs are
+  excluded. Missing expired inputs stay missing; no cross-session read grant
+  is added. Handled fork failures remove copied inputs and child transcripts.
 
 ### 4.6 turns — one row per agent run
 
@@ -640,7 +656,7 @@ Serves: mid-session model switches ("next turn only", spec 13 §4), the
 per-message cost chip's session rollup (benchmark §3.2), failed/aborted badges
 (§3.8), and retry lineage.
 
-### 4.6b turn_queue — Host-owned turn queue (schema v15)
+### 4.6b turn_queue — Host-owned turn queue (introduced in schema v15)
 
 ```sql
 CREATE TABLE turn_queue (
@@ -651,9 +667,12 @@ CREATE TABLE turn_queue (
   input_hash       TEXT NOT NULL,
   content          TEXT NOT NULL,
   attachments_json TEXT,
+  session_message_id TEXT,
+  user_message_id TEXT,
   permission_mode  TEXT NOT NULL,
   position         INTEGER NOT NULL,
   priority         INTEGER,
+  voice_origin_json TEXT,
   created_at       INTEGER NOT NULL
 );
 CREATE INDEX idx_turn_queue_session ON turn_queue(session_id, position);
@@ -675,12 +694,41 @@ CREATE UNIQUE INDEX idx_turn_queue_idempotency
   promoted entries are delivered first in click order and the remaining entries
   keep their `position` order. `queueReorder` swaps two adjacent non-promoted
   `position` values and refuses a promoted entry.
+- `user_message_id` and `voice_origin_json` (schema v20) retain the stable
+  user-message identity and optional Live Voice operation provenance across
+  restart. They are metadata only: queue recovery still does not replay work.
   `IDEMPOTENCY_CONFLICT`. A session holds at most eight entries.
 - `attachments_json` keeps the prompt's attachment references; bytes stay in
   the session scratch or project root like any other prompt attachment.
 - After a restart the module lists every entry, holds each session's queue
   until a controller attaches, and drains one entry after the active turn's
   terminal event. Deleting the session cascades to its entries.
+
+**Session Todo checklist — schema v21**
+
+```sql
+CREATE TABLE session_todo (
+  session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  position INTEGER NOT NULL CHECK (position >= 0 AND position < 50),
+  content TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending', 'in_progress', 'completed', 'cancelled')),
+  priority TEXT NOT NULL DEFAULT 'medium' CHECK (priority IN ('high', 'medium', 'low')),
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (session_id, position)
+);
+```
+
+`sessions.todo_revision` and `sessions.todo_updated_at` retain ordering metadata
+even when the checklist is empty. A host transaction updates those fields,
+deletes the prior rows, and inserts the normalized replacement. The revision
+advances for every successful write, including a clear. A unique partial
+`in_progress` index enforces the single active item invariant at the database
+boundary. Forks begin with revision zero and no rows; session deletion cascades
+the rows.
+
+The row content is bounded at 500 Unicode scalar values, contains no NUL, and
+is trimmed before storage. TodoWrite is the only writer; renderer and sidecar
+code access this state through host RPC.
 
 ### 4.6c session collaboration ledger — Host-owned delivery state (schema v16)
 
@@ -1031,8 +1079,19 @@ behavior. Invalid or empty selections are rejected before mutation. No table
 migration is needed. Daily/weekly schedules use the host local timezone; hourly
 schedules compute `nextRunAt = now + 3_600_000`, ignoring calendar fields. Absence
 of `schedule` leaves legacy tasks unarmed. No physical schema change is made.
-Task wire fields project `schedule`, RFC3339 `nextRunAt` and `workspacePath`.
-See [the automation ADR](../../adr/scheduled-desktop-automations.md).
+Task wire fields project `schedule`, RFC3339 `nextRunAt`, `workspacePath` and the
+optional task-owned `permissionMode` plus paired `providerId`/`modelId` values.
+These additive values stay in `config_json`; no physical migration is required.
+Missing model fields retain run-time app-default resolution. Missing permission
+keeps legacy behavior: Ask for automatic runs and inherited permission for Run now.
+See [the automation ADR](../../adr/scheduled-desktop-automations.md) and
+[ADR 0305](../../adr/0305-scheduled-task-execution-settings.md).
+
+Tasks also persist optional `thinkingLevel` using the existing session values
+(including `off` and `omit`). The full Composer model/reasoning picker and
+controller are reused with a task-draft configuration callback. Both manual and
+automatic runs apply the saved level. Missing or cleared levels retain the
+legacy `off` behavior; no database migration is required.
 
 Scheduled task `config_json.mode` is a durable operating-mode value. There is
 intentionally no physical `scheduled_tasks.mode` column. The v7→v8
@@ -1155,7 +1214,8 @@ is the source of truth, the index is derived and self-healing.
 | event | file step | index/DB transaction |
 |---|---|---|
 | prompt accepted | append user message line | `last_seq` alloc (RETURNING) + index row + touch `sessions.updated_at`; then insert `turns(running)` |
-| assistant/tool message end | append message line; remove the in-flight checkpoint when its id matches | index row + touch session |
+| assistant/tool message end | append message line; remove the in-flight checkpoint when its id matches | validate optional `turnId` belongs to this session; if stale/missing, keep the message with a null turn link and emit a warning; otherwise insert the index row and touch session |
+| stale-turn outbox replay after an index failure | update all existing transcript lines for the message id to the latest snapshot; do not append another line | rebuild deduplicated message rows and `last_seq` from transcript order in one transaction, preserving only valid same-session turn links; FTS triggers stay synchronized |
 | streaming reply checkpoint (`session.saveInflightMessage`, D299) | atomically replace `<id>.inflight.json`; no-op for an empty message or an id already indexed | — |
 | context checkpoint (`session.appendCompaction`) | append typed checkpoint line after its referenced message boundary | — (checkpoint is not searchable transcript content) |
 | tool succeeded (Write/Edit) | — | upsert `artifacts` + `audit_log` row, same tx as result persistence |
@@ -1192,9 +1252,9 @@ prompt, computed from the full durable transcript merged with the live rows.
 A checkpoint is installed into the live runtime only after its append succeeds;
 therefore a failed/crashed checkpoint write leaves the previous full context or
 previous checkpoint authoritative rather than creating a memory-only state.
-A crash between file append and index commit leaves the message readable
-(transcript loads from the file) with only its search row missing until the
-next rewrite; transcript reads dedupe repeated ids keep-last.
+An append failure after the file write leaves the transcript authoritative while
+its derived index is repaired by the next rewrite or by replaying an unindexed
+outbox message with a stale turn reference; repeated ids are deduped keep-last.
 
 The renderer never needs the whole JSONL file to open a session. Its
 `session.get` request may specify a zero-based exclusive `messageBefore`, a
@@ -1341,6 +1401,10 @@ truncating at a guessed position.
   step. The v15→v16 session-collaboration step now stamps `16` (its own version)
   instead of the latest schema constant, so a v15 file can walk both steps in one
   launch.
+- **Schema v20 is additive.** It adds nullable `turn_queue.user_message_id`
+  and `turn_queue.voice_origin_json`; existing queue rows remain valid and
+  unset. The migration keeps a v19 backup, and queue entries remain held until
+  the existing Agent Host controller attaches.
 - **Schema v14 is additive.** It adds nullable `sessions.deleted_at`, the
   partial deletion index, and `session_import_origins`. Existing sessions stay
   active and have no origin rows. The migration runs in the same guarded
@@ -1496,18 +1560,25 @@ line and search text, retaining sequence, owning turn and every other row.
 Late partial snapshots and duplicate terminal snapshots cannot overwrite the
 settled result. Recovery promotes the latest checkpoint in that same position.
 The outbox likewise keeps a newer snapshot that replaces an append while its
-host call is still pending. If `messages.id` already belongs to another
-session, the host remaps to `{sessionId}:{id}` before any JSONL write; a
-replay of the original id is a no-op against that remapped row. The outbox
-treats `UNIQUE constraint failed: messages.id` as an ack and keeps draining
-(D444). A permanently rejected append whose host error carries a
-`PERMISSION_DENIED:` prefix is likewise dropped so the FIFO can continue;
-`PLUGIN_PERMISSION_DENIED` and other host failures still pause (D597).
-Steering into a claimed collaboration delivery turn is extra human input: it
-must target that delivery's session, is exempt from the delivery
-content/attachment contract, does not inherit the delivery origin, and has
-any client-supplied `session_message` stripped. No schema migration is
-required.
+host call is still pending. An optional `turnId` is retained only when the turn
+exists and belongs to the target session; a missing or cross-session turn is
+logged and omitted without rejecting or losing the message. If an older failed
+append already wrote that message to JSONL, replay updates those lines and
+rebuilds the deduplicated index in transcript order rather than appending again.
+If `messages.id` already belongs to another session, the host remaps to
+`{sessionId}:{id}` before any JSONL write; a replay of the original id is a
+no-op against that remapped row. The outbox treats
+`UNIQUE constraint failed: messages.id` as an ack and keeps draining (D444).
+A permanently rejected append whose host error carries a `PERMISSION_DENIED:`
+prefix is likewise dropped so the FIFO can continue; `PLUGIN_PERMISSION_DENIED`
+and other host failures still pause (D597). When the 1024-entry cap remains
+full after a flush attempt, enqueue logs the rejected key/session and rejects;
+it does not report that entry as queued. Generic foreign-key errors are not
+treated as acknowledgements. Steering into a claimed collaboration delivery
+turn is extra human input: it must target that delivery's session, is exempt
+from the delivery content/attachment contract, does not inherit the delivery
+origin, and has any client-supplied `session_message` stripped. No schema
+migration is required.
 
 ## 12. Native Pi session authority (ADR 0254)
 
@@ -1531,6 +1602,13 @@ and transcript append APIs are not invoked. Rename, delete, project move,
 revision, Plan/Goal, collaboration, and queue operations remain unsupported
 for native sessions in this slice. Forking is supported as described here and in
 the runtime spec.
+
+The 0.87.1 `context_edit` entry is part of the native v3 JSONL branch. It changes
+only the SDK-built model projection by omitting or replacing a target message;
+the original line and renderer history remain intact. It is not copied into the
+Desktop transcript or SQLite, and needs no Desktop schema migration. The lease
+guard covers `SessionManager.appendContextEdit` alongside the other native
+append methods.
 
 A native fork writes exactly one new v3 JSONL child in the parent's session
 directory. Branch extraction runs against an in-memory manager over the parent
@@ -1558,3 +1636,25 @@ and bounded asynchronous scanning remain deferred performance work.
 Host-core owns updates through `providers.reorder`; missing metadata preserves
 creation order, new IDs follow saved IDs, and deleted IDs are ignored. This
 preference does not rewrite provider configuration or require a schema migration.
+
+### Scheduled calendar provenance
+
+The optional `config_json.calendarConfigured` boolean records explicit calendar
+intent separately from the schedule object required by Hourly intervals.
+Legacy Daily/Weekly rows with a saved schedule infer calendar intent; legacy
+Hourly rows retain their fields but require explicit calendar confirmation
+when converted. Known intent survives cadence changes and database reopen.
+This additive JSON key needs no table or schema-version migration. Older
+versions ignore the key and cannot enforce the new conversion guard.
+
+## Physical operation usage ledger
+
+Optional operation ID, origin, physical account/model and cost status augment
+existing message/turn usage. `session.recordUsage` merges identities into the
+existing turn `usage_json`; no schema migration or historical rewrite is needed.
+Identified records are idempotent across event replay, outbox retries, tool results
+and parent/subagent rollups. Legacy token-only rows remain readable and additive.
+An unknown price is distinct from a known zero price; partial known costs remain
+on the individual operations. Late usage targets its captured turn and does not
+revive it or debit the currently active turn. Immediate nested parent and owning
+Task remain separate optional transcript/event fields.

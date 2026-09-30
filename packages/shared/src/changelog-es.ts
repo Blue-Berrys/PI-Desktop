@@ -2,9 +2,43 @@ import type { ChangelogEntry } from "./changelog.js";
 
 export const esEntries: ChangelogEntry[] = [
   {
+    "version": "0.15.10",
+    "date": "2026-09-28",
+    "highlights": [
+      "Los plugins del mercado aparecen ahora en orden aleatorio en lugar de alfabético.",
+    ],
+  },
+
+  {
+    "version": "0.15.9",
+    "date": "2026-09-27",
+    "highlights": [
+      "Elimina los archivos obsoletos de ayuda de primer inicio de los paquetes DMG y ZIP de macOS.",
+    ],
+  },
+
+  {
+    "version": "0.15.6",
+    "date": "2026-09-23",
+    "highlights": [
+      "Activa la búsqueda nativa en los servicios existentes de DeepSeek, xAI y OpenAI sin cambiar su configuración de conexión.",
+      "Añade compatibilidad con GPT-6 Astra, Sol y Luna en los catálogos de modelos de OpenAI y ChatGPT/Codex.",
+    ],
+  },
+
+  {
+    "version": "0.15.5",
+    "date": "2026-09-23",
+    "highlights": [
+      "Añade compatibilidad con GPT-6 Astra, Sol y Luna en los catálogos de modelos de OpenAI y ChatGPT/Codex.",
+    ],
+  },
+
+  {
     "version": "0.15.2",
     "date": "2026-09-21",
     "highlights": [
+      "Genera y edita imágenes en el chat, elige un modelo y crea lotes con la habilidad integrada imagegen.",
       "La actividad de herramientas sigue el ancho de la conversación y contiene correctamente las etiquetas largas.",
       "Los archivos adjuntos pegados se conservan aunque el pegado termine después de cambiar de sesión.",
       "El modelo predeterminado seleccionado se conserva al editar proveedores y se aplica un respaldo seguro si se elimina.",

@@ -236,7 +236,10 @@ fn a_global_skill_moves_into_a_project() {
 
         assert_eq!(moved.id, "review");
         assert_eq!(moved.level.as_deref(), Some("project"));
-        assert_eq!(moved.project_path.as_deref(), Some(project_path.as_str()));
+        assert_eq!(
+            moved.project_path.as_deref(),
+            Some(crate::agent_capabilities::normalize_project_path(&project_path).as_str())
+        );
         assert!(!home.path().join("skills/review.md").exists());
         let target = project.path().join(".agents/skills/review.md");
         assert_eq!(
@@ -727,9 +730,15 @@ fn imports_a_directory_with_skill_md_in_link_mode() {
     let mut registry = UserSkillRegistry::new(app.path());
     let mut payload = input("Ignored", "project", Some(app.path().to_str().unwrap()));
     payload.mode = Some("link".into());
-    let record = registry
-        .import(source_dir.to_str().unwrap(), payload)
-        .unwrap();
+    let record = match registry.import(source_dir.to_str().unwrap(), payload) {
+        Ok(record) => record,
+        Err(err) if cfg!(windows) && format!("{err:#}").contains("1314") => {
+            // Unprivileged Windows environments without Developer Mode enabled
+            // cannot create filesystem symlinks (os error 1314).
+            return;
+        }
+        Err(err) => panic!("import failed unexpectedly: {err:#}"),
+    };
     let normalized_project =
         crate::agent_capabilities::normalize_project_path(app.path().to_str().unwrap());
     let expected_root = crate::agent_capabilities::capability_dir(
@@ -763,7 +772,15 @@ fn imports_a_file_in_link_mode() {
     let mut registry = UserSkillRegistry::new(app.path());
     let mut payload = input("Ignored", "project", Some(app.path().to_str().unwrap()));
     payload.mode = Some("link".into());
-    let record = registry.import(source.to_str().unwrap(), payload).unwrap();
+    let record = match registry.import(source.to_str().unwrap(), payload) {
+        Ok(record) => record,
+        Err(err) if cfg!(windows) && format!("{err:#}").contains("1314") => {
+            // Unprivileged Windows environments without Developer Mode enabled
+            // cannot create filesystem symlinks (os error 1314).
+            return;
+        }
+        Err(err) => panic!("import failed unexpectedly: {err:#}"),
+    };
     let normalized_project =
         crate::agent_capabilities::normalize_project_path(app.path().to_str().unwrap());
     let expected = crate::agent_capabilities::capability_dir(
@@ -828,4 +845,59 @@ fn shape_dir_requires_a_directory_source() {
         err.contains("SKILL_INVALID") && err.contains("directory"),
         "err = {err}"
     );
+}
+
+#[test]
+fn directory_skill_package_resources_round_trip_without_execution() {
+    let app = tempdir().unwrap();
+    let project = app.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let mut registry = UserSkillRegistry::new(app.path());
+    let mut payload = input("Packaged", "project", Some(project.to_str().unwrap()));
+    payload.id = Some("packaged".into());
+    payload.shape = Some("dir".into());
+    let record = registry.create(payload).unwrap();
+    registry
+        .write_package_files(
+            &record.id,
+            CapabilityLevel::Project,
+            Some(project.to_str().unwrap()),
+            &[("scripts/check.txt".into(), b"safe bytes".to_vec())],
+        )
+        .unwrap();
+    let files = registry
+        .package_files(
+            &record.id,
+            CapabilityLevel::Project,
+            Some(project.to_str().unwrap()),
+        )
+        .unwrap();
+    assert_eq!(
+        files,
+        vec![("scripts/check.txt".into(), b"safe bytes".to_vec())]
+    );
+    assert!(record.path.ends_with("SKILL.md"));
+}
+
+#[test]
+fn directory_skill_package_rejects_traversal() {
+    let app = tempdir().unwrap();
+    let project = app.path().join("project");
+    fs::create_dir_all(&project).unwrap();
+    let mut registry = UserSkillRegistry::new(app.path());
+    let mut payload = input("Packaged", "project", Some(project.to_str().unwrap()));
+    payload.id = Some("packaged".into());
+    payload.shape = Some("dir".into());
+    let record = registry.create(payload).unwrap();
+    let error = registry
+        .write_package_files(
+            &record.id,
+            CapabilityLevel::Project,
+            Some(project.to_str().unwrap()),
+            &[("../outside.txt".into(), b"unsafe".to_vec())],
+        )
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("SKILL_INVALID"));
+    assert!(!app.path().join("outside.txt").exists());
 }

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-Policy-Sync: 2026-09-21.1
+Policy-Sync: 2026-09-26.1
 
 Mandatory rules for AI coding agents working in PI-Desktop.
 
@@ -234,6 +234,21 @@ cd <worktree-path>
 
 All implementation, targeted validation, conflict resolution, and
 task-candidate E2E happen inside the task's dedicated worktree.
+
+### E2E environment reuse
+
+Task-candidate E2E runs from the dedicated request worktree but reuses the
+host development environment already provisioned in the primary checkout.
+Reuse the host Node/pnpm toolchain, compatible `node_modules`, Electron,
+Rust/Cargo targets, package-manager stores, build caches, and ignored local
+configuration by reference or link when needed.
+
+Do not run `pnpm install`, `npm install`, or create a second dependency or
+runtime environment solely to execute E2E. Keep only mutable test state
+(temporary profiles, data directories, sockets, ports, logs, and artifacts)
+isolated to the request worktree or its scratch directory. Install or rebuild
+dependencies only when the host environment is missing or incompatible, and
+record that reason. Clean CI and release runners may install from lockfiles.
 
 ### Before candidate validation
 
@@ -729,6 +744,17 @@ and leave it open. Do not implement first and investigate later.
 ---
 
 ## 15. GitHub Pull Request Intake
+
+**Temporary PR type scope (effective 2026-09-26).** Outside contributions
+are limited to `perf` and `fix` pull requests. A pull request from a
+contributor without write access whose change type is `feat`, `refactor`,
+`docs`, `test`, `chore`, `build`, or `ci` is not a landing candidate:
+comment the policy in the pull request's language, then close it without
+merging, and do not reimplement it as a replacement while the restriction
+is in force. Maintainers — accounts with write access, plus the branches
+and automated agent work they direct — keep every change type. The
+restriction is lifted by removing this paragraph and R6.1 in
+`docs/spec/06-delivery/03-ai-development-workflow.md`.
 
 For a linked pull request, fetch it first. Do not replace the
 contributor's work until the review below is complete.
