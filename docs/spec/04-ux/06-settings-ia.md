@@ -100,6 +100,25 @@ Settings is a **full-window page** that replaces the app sidebar + main chrome (
 ## 2. Section contents
 
 ### General
+
+- **Storage** shows the effective application data path and the reclaimable cache
+  size. It is included in settings search. Choose directory uses the native picker;
+  confirmation displays both application and browser source paths, the target,
+  migration scope and the restart/backup policy. Cancelling has no side effects.
+  Accepting locks repeat actions until the app exits through ordered shutdown.
+- A separate sandboxed cold-maintenance window shows localized scanning, copying,
+  verifying and internal-path relocation stages, file counts, copied/verified bytes
+  and determinate progress where known. It does not load plugins or agent services.
+  Failure explains that the original profile remains active, then returns to it;
+  settings exposes the error and permits retry. A disconnected selected volume
+  blocks startup with a recovery explanation instead of silently using empty data.
+- **Clear cache** shows a size and requires an inline confirmation describing the
+  retained durable data before clearing and restarting. **Delete old backups** is
+  separate, lists original paths and warns users to check their plugins and old
+  attachments first. Arbitrary plugin-owned absolute references cannot be rewritten
+  by the host. Environment-controlled profiles display why maintenance is disabled.
+  Confirmation gets keyboard focus, asynchronous errors remain visible, and all
+  visible copy is localized. These operations affect only this local installation.
 - **Appearance** card:
   - **Theme**: a searchable picker row (same anchored-menu pattern as
     Language). The closed trigger sizes to the current label, capped by the
@@ -473,8 +492,11 @@ a usage tab.
     `/messages`, `/chat/completions`, or `/responses` when the field loses
     focus. The placeholder is enough — no helper paragraph under the URL.
     Invalid URLs show an inline error and block discovery and save. A failed
-    model-list probe shows a compact classified error in the empty pane, or a
-    one-line banner above a cached list; raw HTTP/JSON dumps are not shown.
+    model-list probe reports one classified sentence through the app toast and
+    leaves a one-line “no list” label in the empty pane, or the rows in place
+    above it; raw HTTP/JSON dumps are shown in neither. A settled probe —
+    connected, catalog, or refused — is announced once instead of holding a
+    status row under the key.
     Named display names and optional custom headers stay behind Advanced settings.
     The dialog header's upper-right actions include an explicit Advanced settings
     button that opens a separate compact modal, keeping the main form focused on

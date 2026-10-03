@@ -6,6 +6,9 @@ importers:
   .:
     configDependencies: {}
     packageManagerDependencies:
+      '@pnpm/exe':
+        specifier: 12.8.1
+        version: 12.8.1
       pnpm:
         specifier: 12.8.1
         version: 12.8.1
@@ -89,6 +92,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@pnpm/exe@12.8.1':
+    resolution: {integrity: sha512-ju5MeefhEEXI7NO3u6oj54uGBOkN0pVhI+tcmuZDkTTqVdRZvEVEo+zhjwAoe8vEXguQCvsa6cTDhmFPxpOXeQ==}
+    engines: {node: '>=18.*'}
+    hasBin: true
+
   pnpm@12.8.1:
     resolution: {integrity: sha512-9kupB1B/XOr+BsjTjmBS0BeURFgOwSed3Vv8EctIqoomRLZlmOB+dh2oSHKp/FfV+QK4f6SdAkGY1VhhKqu+RQ==}
     engines: {node: '>=18.*'}
@@ -138,6 +146,23 @@ snapshots:
   '@pnpm/exe.win32-x64@12.8.1':
     optional: true
 
+  '@pnpm/exe@12.8.1':
+    optionalDependencies:
+      '@pnpm/exe.android-arm64': 12.8.1
+      '@pnpm/exe.android-x64': 12.8.1
+      '@pnpm/exe.darwin-arm64': 12.8.1
+      '@pnpm/exe.darwin-x64': 12.8.1
+      '@pnpm/exe.freebsd-x64': 12.8.1
+      '@pnpm/exe.linux-arm64': 12.8.1
+      '@pnpm/exe.linux-arm64-musl': 12.8.1
+      '@pnpm/exe.linux-ppc64': 12.8.1
+      '@pnpm/exe.linux-riscv64': 12.8.1
+      '@pnpm/exe.linux-s390x': 12.8.1
+      '@pnpm/exe.linux-x64': 12.8.1
+      '@pnpm/exe.linux-x64-musl': 12.8.1
+      '@pnpm/exe.win32-arm64': 12.8.1
+      '@pnpm/exe.win32-x64': 12.8.1
+
   pnpm@12.8.1:
     optionalDependencies:
       '@pnpm/exe.android-arm64': 12.8.1
@@ -175,7 +200,7 @@ overrides:
 
 patchedDependencies:
   '@earendil-works/pi-agent-core@0.99.1':
-    hash: b98bc9f5653147d34650f4be892612c7b34f7c553a58cb70457cf900310347d7
+    hash: bbec87b73d8febb2bfc1441c900bb56488965269dcd1e858ec58e09365b09853
     path: patches/@earendil-works__pi-agent-core@0.99.1.patch
   '@earendil-works/pi-ai@0.99.1':
     hash: c9e66480f4eefd4a5d3ac998d3b65bf761fb22a17a238cb44c76d31448454ec4
@@ -401,7 +426,7 @@ importers:
     dependencies:
       '@earendil-works/pi-agent-core':
         specifier: 0.99.1
-        version: 0.99.1(patch_hash=b98bc9f5653147d34650f4be892612c7b34f7c553a58cb70457cf900310347d7)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@8.10.2)(ws@8.21.1)(zod@4.4.3)
+        version: 0.99.1(patch_hash=bbec87b73d8febb2bfc1441c900bb56488965269dcd1e858ec58e09365b09853)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@8.10.2)(ws@8.21.1)(zod@4.4.3)
       '@earendil-works/pi-ai':
         specifier: 0.99.1
         version: 0.99.1(patch_hash=c9e66480f4eefd4a5d3ac998d3b65bf761fb22a17a238cb44c76d31448454ec4)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@8.10.2)(ws@8.21.1)(zod@4.4.3)
@@ -420,6 +445,9 @@ importers:
       undici:
         specifier: 8.10.2
         version: 8.10.2
+      yaml:
+        specifier: 2.9.0
+        version: 2.9.0
     devDependencies:
       '@types/node':
         specifier: ^24.13.3
@@ -5307,7 +5335,7 @@ snapshots:
     dependencies:
       esbuild: 0.28.2
 
-  '@earendil-works/pi-agent-core@0.99.1(patch_hash=b98bc9f5653147d34650f4be892612c7b34f7c553a58cb70457cf900310347d7)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@8.10.2)(ws@8.21.1)(zod@4.4.3)':
+  '@earendil-works/pi-agent-core@0.99.1(patch_hash=bbec87b73d8febb2bfc1441c900bb56488965269dcd1e858ec58e09365b09853)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@8.10.2)(ws@8.21.1)(zod@4.4.3)':
     dependencies:
       '@earendil-works/chord': 0.99.1
       '@earendil-works/pi-ai': 0.99.1(patch_hash=c9e66480f4eefd4a5d3ac998d3b65bf761fb22a17a238cb44c76d31448454ec4)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@8.10.2)(ws@8.21.1)(zod@4.4.3)
@@ -5386,7 +5414,7 @@ snapshots:
   '@earendil-works/pi-coding-agent@0.99.1(patch_hash=0e05051778ef4ffca9bac7ec68cae64f1d659d4b8640eeeb1a121e0f620a6abe)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(ws@8.21.1)(zod@4.4.3)':
     dependencies:
       '@earendil-works/chord': 0.99.1
-      '@earendil-works/pi-agent-core': 0.99.1(patch_hash=b98bc9f5653147d34650f4be892612c7b34f7c553a58cb70457cf900310347d7)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@8.10.2)(ws@8.21.1)(zod@4.4.3)
+      '@earendil-works/pi-agent-core': 0.99.1(patch_hash=bbec87b73d8febb2bfc1441c900bb56488965269dcd1e858ec58e09365b09853)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@8.10.2)(ws@8.21.1)(zod@4.4.3)
       '@earendil-works/pi-ai': 0.99.1(patch_hash=c9e66480f4eefd4a5d3ac998d3b65bf761fb22a17a238cb44c76d31448454ec4)(@aws-sdk/credential-provider-node@3.972.83)(@smithy/signature-v4@5.7.3)(undici@8.10.2)(ws@8.21.1)(zod@4.4.3)
       '@earendil-works/pi-codemode': 0.99.1
       '@earendil-works/pi-mcp': 0.99.1

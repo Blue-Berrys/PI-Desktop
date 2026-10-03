@@ -20,9 +20,9 @@
 ### E2E-LIVE-WORK-session-admission
 
 - **前提：** 使用隔离的 Live Provider fixture、本地 AgentHost 会话和确定性意图分类器；候选请求须从现有 Live adapter 回调进入，不使用真实账号或付费端点。
-- **步骤：** 验证纯通话没有工作作用域时会拒绝任务候选；再以明确选择的本地会话和关闭的上下文共享启动工作通话。提交一个已声明工具请求并检查回执、Host admission 和 `voiceOrigin`。覆盖忙时独立排队、过期 steer、精确回合 stop、submit 返回前到达的终态事件，以及基于已记录结果的只读查询。请求项目／会话列表，确认只返回标签和本次 call 的 opaque 引用；通过面板动作打开已列会话、在已列项目中新建会话，并确认工作绑定仍固定。分别保持 Provider 生成、用户讲话和本地播放活跃，确认反馈须待三者空闲和静默窗口结束后才发送。覆盖 silent、静默时的显式查询、过期反馈降级；结束通话时确认已受理工作仍保留。
+- **步骤：** 验证纯通话没有工作作用域时会拒绝任务候选；再以明确选择的本地会话和关闭的上下文共享启动工作通话。提交一个已声明工具请求并检查回执、Host admission 和 `voiceOrigin`。覆盖忙时独立排队、过期 steer、精确回合 stop、submit 返回前到达的终态事件，以及基于已记录结果的只读查询。请求项目／会话列表，确认只返回标签和本次 call 的 opaque 引用；通过面板动作打开已列会话、在已列项目中新建会话，并确认工作绑定仍固定。分别保持 Provider 生成、用户讲话和本地播放活跃，确认反馈须待三者空闲和静默窗口结束后才发送。覆盖 silent、静默时的显式查询、过期反馈降级；当提交处于等待用户决策状态时，确认紧凑栏保留等待提示、详情显示待决请求并提供打开该精确会话的操作，且其他会话的待决请求不会被归到绑定会话；当提交处于等待用户决策状态时，确认紧凑栏保留等待提示、详情显示待决请求并提供打开该精确会话的操作，且其他会话的待决请求不会被归到绑定会话。随后用语音回答该 AskTool 提问，确认会话卡片经由 Host 输入路径解决；再分别用提问从未提供的标签、只回答一部分、以及同时存在两个待答提问重试，确认每次都被拒绝、不产生写操作且不重试。结束通话时确认已受理工作仍保留。
 - **预期：** 工作始终绑定到通话开始时选定的会话；关闭上下文共享时不读取历史；现有 AgentHost 执行 prompt、steer、queue 和 stop；重复 Provider ID 不重复派发；结果查询只投影准确操作摘要且不会创建新回合。项目／会话选项不暴露原始路径或 ID，引用按 call 隔离并过期；打开只导航，创建必须先列出注册项目并由用户点击确认。自动反馈同时观察 Provider 生成状态和本地播放活动，任务执行与反馈投递状态分开。结束 Live 不取消已受理任务；Renderer 信号不代表用户已经听到结果。
-- **覆盖：** `apps/desktop/test/live-voice-service.test.mjs` 覆盖纯通话拒绝、显式工作作用域和 Provider／用户／本地播放的反馈门控及独立投递状态；`packages/host-runtime/src/live-work/coordinator.test.ts` 覆盖回执顺序、路由、过期 steer、去重、关闭通话、早到终态和选择流程；`packages/host-runtime/src/live-work/feedback-scheduler.test.ts` 覆盖防抖、播报间隔、silent、过期降级、去重与溢出；`packages/host-runtime/src/live-work/context.test.ts` 覆盖上下文投影与 opaque 引用；`packages/host-runtime/src/live-work/result-summary.test.ts` 覆盖精确回合摘要和诚实回退；`packages/agent-host/src/agent-host.test.ts` 覆盖无历史快照、队列和语音来源；`packages/voice-runtime/src/live/protocol.test.ts` 覆盖 Provider 工具及反馈编码；`apps/desktop/test/live-work-scope.test.mjs` 覆盖引用作用域／过期，`live-work-operations.test.mjs` 覆盖面板动作，`voice-runtime/src/live/playback-monitor.test.ts` 覆盖本地音频信号检测。该自动化覆盖仍不等于 W2-001—W2-096 全矩阵，也不代表真实 Provider／设备验收。
+- **覆盖：** `apps/desktop/test/live-voice-service.test.mjs` 覆盖纯通话拒绝、显式工作作用域和 Provider／用户／本地播放的反馈门控及独立投递状态；`packages/host-runtime/src/live-work/coordinator.test.ts` 覆盖回执顺序、路由、过期 steer、去重、关闭通话、早到终态和选择流程；`packages/host-runtime/src/live-work/feedback-scheduler.test.ts` 覆盖防抖、播报间隔、silent、过期降级、去重与溢出；`packages/host-runtime/src/live-work/context.test.ts` 覆盖上下文投影与 opaque 引用；`packages/host-runtime/src/live-work/result-summary.test.ts` 覆盖精确回合摘要和诚实回退；`packages/agent-host/src/agent-host.test.ts` 覆盖无历史快照、队列和语音来源；`packages/voice-runtime/src/live/protocol.test.ts` 覆盖 Provider 工具及反馈编码；`apps/desktop/test/live-work-scope.test.mjs` 覆盖引用作用域／过期，`live-work-operations.test.mjs` 覆盖面板动作，`live-work-decision.test.mjs` 覆盖等待决策投影、会话作用域、有界纯文本渲染与打开绑定会话的面板操作，`voice-runtime/src/live/playback-monitor.test.ts` 覆盖本地音频信号检测；`packages/host-runtime/src/live-work/ask-answer.test.ts` 覆盖语音回答意图与路由（解决、拒绝、unknown 且绝不重发），`apps/desktop/test/spoken-answer.test.mjs` 覆盖只选既有选项的匹配、有界朗读内容与投递预算。该自动化覆盖仍不等于 W2-001—W2-096 全矩阵，也不代表真实 Provider／设备验收。
 - **状态：** 部分完成；其余场景和实机矩阵见 `docs/implementation/live-work-evidence.md`。
 
 ### E2E-LIVE-WORK-v2.1-reliability
@@ -92,7 +92,9 @@
   4. 打开详情，检查转录、服务商和工作状态，然后分别通过关闭、点击外部和
      Escape 关闭详情。通话保持连接；通过通话栏恢复暂停的声音，观察恢复失败，
      再明确重试并恢复。
-  5. 在聊天、设置、插件和会话间导航。在 Main 延迟终止和 Renderer 延迟清理的
+  5. 在聊天、设置、插件和会话间导航。通话控件是停靠的桌面挂件窗口：拖动它自身的
+     通话栏，确认位置在这些导航后仍然保留、并会被夹取回工作区内，同时确认主窗口
+     不再绘制任何通话栏。在 Main 延迟终止和 Renderer 延迟清理的
      情况下结束通话或禁用功能，并分别测试两种清理完成顺序。在两者完成前，
      始终显示「结束中」，且不允许再次开始。模拟释放未确认，确认阻止状态可见。
   6. 重新打开准备界面，确认工作授权和上下文确认均未勾选。仅展开区域或选择
@@ -171,7 +173,7 @@ unit/integration 测试；代码 pull request 使用有选择且高价值的 E2E
 
 | 要求 | 详情 |
 |---|---|
-| 平台 | macOS arm64、Intel x64、Windows x64 和 Linux x64 发行目标 (D126/D285) |
+| 平台 | macOS arm64、Intel x64、Windows x64 和 Linux x64 及 arm64 发行目标 (D126/D285、D638 / ADR 0318) |
 | 公司简介 | 干净的 `~/.pi-desktop` 配置文件（无需事先配置） |
 | 固定装置 | 示例项目目录 (`examples/fixtures/sample-project/`) |
 | 示例插件 | 从本地路径加载 `examples/plugins/hello` |
@@ -402,7 +404,7 @@ task-candidate E2E 从请求工作树运行，但使用主工作区已经准备�
 #### E2E-005I：从选择器标题重新获取服务模型列表
 
 - **前提条件**：添加或编辑服务（或厂商账户）对话框已打开，且该服务可访问并提供 `/models` 列表。
-- **步骤**：1) 确认左侧标题旁有「获取列表」，在有效端点就绪前为禁用。2) 填入有效端点。确认在 600 ms 防抖等待期间「获取列表」已可用。立刻点击；确认它不等待该窗口，探测时显示加载文案，然后列出模型。3) 再次点击「获取列表」。确认加载期间保留当前行，并以实时结果替换。4) 让服务离线后再点「获取列表」；确认出现分类错误且先前的行仍在。5) 恢复服务，再点「获取列表」，确认实时列表回来。6) 在厂商账户编辑对话框重复上述步骤。
+- **步骤**：1) 确认左侧标题旁有「获取列表」，在有效端点就绪前为禁用。2) 填入有效端点。确认在 600 ms 防抖等待期间「获取列表」已可用。立刻点击；确认它不等待该窗口，探测时显示加载文案，然后列出模型。3) 再次点击「获取列表」。确认加载期间保留当前行，并以实时结果替换。4) 让服务离线后再点「获取列表」；确认分类错误以 toast 出现且先前的行仍在。5) 恢复服务，再点「获取列表」，确认实时列表回来。6) 在厂商账户编辑对话框重复上述步骤。
 - **预期**：标题上的操作会立刻向服务探测，包括端点刚变为有效后的防抖等待期间。凭据变更触发的自动发现不变。两种凭据都有同一控件，因为两个对话框共用该选择器。
 - **链接规格**：`03-runtime/13-model-catalog-and-selection.md`、
   `04-ux/06-settings-ia.md`、`04-ux/08-component-spec.md`
@@ -1524,6 +1526,14 @@ task-candidate E2E 从请求工作树运行，但使用主工作区已经准备�
 - **关联规格**：`03-runtime/01-ipc-protocol.md` §12a、`07-plugins/04-plugin-security.md` §8.1
 - **状态**：客户端及会话隔离已有单元测试；完整桌面流程待验证
 
+#### E2E-MCP-tool-requires-approval：用户 MCP 工具在 ask 与 accept-edits 下需要审批
+
+- **先决条件**：一个绑定项目的 Agent 会话；一个用户配置的 stdio MCP 服务器，其工具列表把某个工具标注为只读/低风险。
+- **步骤**：1) 会话处于 `ask` 时，让代理调用该 MCP 工具。2) 以“允许一次”回应卡片后再次调用，再以“本会话允许”回应并第三次调用。3) 在新会话中切到 `accept-edits` 并重复调用。4) 切到 `auto` 调用。5) 依次切到 Plan、Goal 调用。
+- **预期**：在 `ask` 与 `accept-edits` 下，每次调用都显示审批卡片，原因为 "MCP server tool requires approval"，风险为 `medium`，与服务器自行声明的标注无关。“允许一次”只覆盖该次调用；“本会话允许”只在该会话内对同一 `mcp_<serverId>_<tool>` 名称不再提示，不覆盖该服务器的其他工具。`auto` 不显示卡片直接执行。Plan 与 Goal 即使存在会话授权也拒绝。
+- **关联规格**：`03-runtime/03-tools-and-permissions.md`、`05-security/01-security.md`、D640、ADR `mcp-tool-approval-risk`
+- **状态**：已有单元测试（host-core `permissions.rs` MCP 风险与模式测试）；桌面流程待验证
+
 #### E2E-024L：常驻插件服务受监督且可见
 
 - **先决条件**：在授予 `background.service` 的情况下启用 `examples/plugins/hello`。
@@ -1743,7 +1753,7 @@ task-candidate E2E 从请求工作树运行，但使用主工作区已经准备�
 
 #### E2E-195：Linux glibc 低于 2.35 时列出支持的发行版
 
-- **先决条件**：Linux x64 打包应用；本机 glibc 低于 2.35（例如 Ubuntu 20.04 /
+- **先决条件**：Linux x64 或 arm64 打包应用；本机 glibc 低于 2.35（例如 Ubuntu 20.04 /
   Debian 11 / Fedora 35），或测试将 `process.report` 设为 `2.31`。
 - **步骤**：1) 启动 AppImage、deb 或 rpm。2) 观察主窗口和致命横幅。3) 确认
   host-core 没有进入重启循环。
@@ -1814,6 +1824,31 @@ task-candidate E2E 从请求工作树运行，但使用主工作区已经准备�
 - **状态**：源代码/单元已覆盖（`apps/desktop/test/agent-capability-settings.test.mjs`、
   `apps/desktop/test/subagent-wiring.test.mjs`、`packages/agent-runtime/src/subagent-definitions.test.ts`、
   `packages/shared/src/subagent-presets.test.ts`）；完整 UI 旅程为草稿
+
+#### E2E-192a：Linux arm64 发布通道发布原生 arm64 包
+
+- **先决条件**：`vX.Y.Z` 标签与 `apps/desktop/package.json` 一致；仓库可使用 GitHub
+  的 arm64 `ubuntu-22.04-arm` 运行器。
+- **步骤**：1) 运行标签发布工作流程。2) 确认 arm64 通道运行在
+  `aarch64` 运行器上，且打包出的
+  `target/release/pi-desktop-host-core` 是 AArch64 二进制。3) 检查
+  已发布的 Release 资产中是否有 `PI-Desktop-X.Y.Z-linux-arm64.AppImage`、
+  `pi-desktop_X.Y.Z_arm64.deb`、`pi-desktop-X.Y.Z-aarch64.rpm`、
+  `PI-Desktop-X.Y.Z-linux-arm64.asar`，以及带 `.sha256` 的
+  `pi-host-X.Y.Z-linux-arm64.tar.gz`。4) 确认
+  `latest-linux.yml` 仍列出 x64 AppImage，而
+  `latest-linux-arm64.yml` 列出 arm64 的那个。5) 在 arm64 Linux 机器上安装 arm64
+  的 AppImage、deb 或 rpm 并启动它。
+- **预期**：两个更新源各自只描述一个带架构标记的 AppImage，
+  arm64 包携带 arm64 host-core，应用能在 arm64 Linux 上启动，
+  且合并通道永远不会用 arm64 更新源替换 x64 更新源。
+- **链接规格**：`06-delivery/06-release-runbook.md`、`01-product/01-product-scope.md`
+- **验收**：质量（发布工件与打包兼容性）
+- **里程碑**：M6+
+- **状态**：矩阵、更新源命名、工件命名和 ASAR 导出由单元/源代码契约覆盖
+  （`ci-workflow.test.mjs`、`release-asar.test.mjs`）；
+  原生 arm64 安装仍需运行器验证。麦克风采集在 arm64 Linux 上仍仅限
+  Raspberry Pi (D638 / ADR 0318)。
 
 #### E2E-200：Linux RPM 保留 Wayland 桌面身份
 
@@ -5602,6 +5637,9 @@ eleven-tool-round desktop paths are verified by
 [决策日志 §D](/zh-CN/spec/08-meta/decisions-log) 中的法典平价决策
 而不是 A-H 标准；他们的黄金来源是捕获套件。
 
+发布工件路径由 E2E-192、E2E-192a、E2E-196a、E2E-196b、E2E-196c 和 E2E-200 覆盖
+（质量，M6+）。
+
 ---
 
 ## 9. AI 必须如何更新本文档
@@ -8685,16 +8723,17 @@ the latest destination. These assertions measure work counts, not device FPS.
 
 - **前提：** 独立桌面配置、构建后的任务候选版本、本地 SSE 模拟模型；不使用真实
   服务凭据或付费 API。
-- **步骤：** 点击页脚时钟；创建每天上午 09:00 的任务；选择另一个已保存项目、Auto 权限和非默认模型；编辑名称；暂停／启用；立即运行；
-  打开结果会话；验证周期／四个时段主题下拉菜单、星期多选及选中标记、保存回显、空选择与固定时间；
+- **步骤：** 点击页脚时钟；创建每天上午 09:00 的任务；选择另一个已保存项目、Auto 权限和非默认模型；编辑名称；暂停／启用；立即运行并在任务页面内读取刚准入运行的转写；从该页面打开结果会话，确认顶部栏提供返回定时任务的入口，返回后仍选中同一个任务与同一次运行；验证周期／四个时段主题下拉菜单、星期多选及选中标记、保存回显、空选择与固定时间；
   验证方向键、Home/End、Enter、Escape／Tab 和外部点击关闭；
   验证每小时无时间输入且首次等待一小时；设置每天任务在下一个真实分钟执行；
+  选择间隔周期并填入 30 分钟，确认任务行显示该跨度而不是时钟，再切到每周周期后切回，确认该值仍然保留；打开编辑表单，确认任务列与任务页面让位；
+  让一个任务积累超过共享窗口的运行记录、另一个任务保持空闲，确认空闲任务仍然显示自己的最近一次结果；
   观察自动完成；删除已结束的任务。普通 Agent 对话经模型工具调用发现、创建、查询、
   修改任务到 15:30，再删除；验证页面显示具体时间，改名保存不覆盖。模型为本地确定性夹具。
 - **预期：** 项目、权限和精确 provider/model 只保存在该任务，重新打开仍显示相同值并实际传到 sidecar，其他任务不受影响；项目、权限和模型控件保持嵌在“指令”框的 Composer 风格底栏中，窄窗口也不产生横向溢出；缺少新增字段的旧记录保持原默认行为。配置持久化并显示下次时间；暂停后不触发；手动与自动入口均调用真实
-  Agent sidecar；历史记录链接到持久化会话；自动执行不依赖渲染器发送提示词。
+  Agent sidecar；本任务的运行记录列出每次运行的状态与耗时，「打开会话」到达持久化会话，而会话列表与会话搜索不会列出它，该会话顶部栏可返回同一个任务与同一次运行；间隔任务按表单给出的跨度排程并在任务行中显示，表单打开时独占本页；让一个任务积累超过共享窗口的运行记录、另一个保持空闲时，空闲任务仍显示自己的最近一次结果；自动执行不依赖渲染器发送提示词。
   宿主测试补充验证重复准入、错过时段、无效输入和重启恢复。
-- **规格：** 04-ux/01-ui-ia §3.3；03-runtime/04-data-storage §4.11；
+- **规格：** 04-ux/01-ui-ia §3.3；04-ux/08-component-spec §6、§20A；03-runtime/04-data-storage §4.11；
   ADR scheduled-desktop-automations；ADR 0305。
 - **验收：** 定时执行与可恢复的运行历史。
 - **里程碑：** MVP 后的桌面自动化。

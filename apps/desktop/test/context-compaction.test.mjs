@@ -154,7 +154,7 @@ test("a delegate gets the session's turn-boundary budget protection (ADR 0299)",
   assert.match(runtime, /budget: contextBudgetLimitsFor\(model\)/);
   assert.match(delegationHistory, /truncateSeededMessages/);
   assert.match(delegationHistory, /\.\.\.message, content, stopReason: "stop"/);
-  // The compaction itself uses pi-agent-core's primitives, the session's
+  // The compaction itself uses the runtime-owned preparation, the session's
   // retention rule, and the degradation ladder of decision 4.
   assert.match(subagentContext, /prepareCompaction\(/);
   assert.match(subagentContext, /generateSummaryWithUsage\(/);
