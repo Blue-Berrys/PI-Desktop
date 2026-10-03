@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::fs::File;
 use std::future::pending;
-use std::io::{self, BufRead, BufReader, ErrorKind};
+use std::io::{self, BufRead, BufReader, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -954,9 +954,10 @@ fn count_lines_fast(path: &Path) -> std::io::Result<usize> {
 /// user's MCP servers both live in Electron main, so both are forwarded over
 /// `plugins.execute` instead of being executed here.
 ///
-/// `mcp_` is treated exactly like `plugin_` for risk and read-only-mode
-/// purposes: the user typed the command or URL into the MCP editor themselves,
-/// which is at least as deliberate as accepting a plugin's manifest.
+/// `mcp_` is treated like `plugin_` for dispatch and read-only-mode purposes.
+/// For risk it matches a plugin tool without a valid declaration (`medium`):
+/// the user configured the server, but its tools and any risk they self-declare
+/// are opaque, so they keep the normal approval path (`permissions.rs`).
 pub fn is_desktop_dispatched(tool_name: &str) -> bool {
     tool_name.starts_with("plugin_") || tool_name.starts_with("mcp_")
 }
@@ -1207,6 +1208,87 @@ fn root_label(root_kind: ToolRoot) -> &'static str {
     }
 }
 
+/// Image extensions Read returns as an inline image block instead of refusing
+/// them as binary content. Mirrors the mime types pi-ai can attach to a tool
+/// result for vision models (issue #1073); everything else, including svg,
+/// keeps the text/binary refusal below.
+fn inline_image_mime(extension: &str) -> Option<&'static str> {
+    match extension {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        _ => None,
+    }
+}
+
+/// Read an image file and return it as a structured image block. The runtime
+/// converts a top-level `images` array into pi-ai `ImageContent` blocks, so a
+/// vision-capable model receives the picture itself instead of a binary-file
+/// refusal (issue #1073). Signature bytes are checked so a text file with an
+/// image extension is never inlined as picture data.
+fn read_image_block(
+    resolved: &Path,
+    display: &str,
+    size: u64,
+    mime: &str,
+) -> Result<Value, (String, String)> {
+    // Matches MAX_INLINE_IMAGE_BYTES in packages/shared/src/attachment-limits.ts;
+    // host-core cannot import the TS constant.
+    const MAX_INLINE_IMAGE_BYTES: usize = 10_000_000;
+    if size > MAX_INLINE_IMAGE_BYTES as u64 {
+        return Err((
+            "TOOL_FAILED".into(),
+            format!(
+                "{display} is {size} bytes; images above {MAX_INLINE_IMAGE_BYTES} bytes are not inlined"
+            ),
+        ));
+    }
+    let file = File::open(resolved).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            (
+                "FILE_NOT_FOUND".into(),
+                format!("File not found: {display}"),
+            )
+        } else {
+            ("TOOL_FAILED".into(), format!("read failed: {e}"))
+        }
+    })?;
+    let mut bytes = Vec::with_capacity(size as usize);
+    file.take((MAX_INLINE_IMAGE_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|e| ("TOOL_FAILED".into(), format!("read failed: {e}")))?;
+    if bytes.len() > MAX_INLINE_IMAGE_BYTES {
+        return Err((
+            "TOOL_FAILED".into(),
+            format!(
+                "{display} exceeds {MAX_INLINE_IMAGE_BYTES} bytes; images above this limit are not inlined"
+            ),
+        ));
+    }
+    let size = bytes.len();
+    let signature_ok = match mime {
+        "image/png" => bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "image/jpeg" => bytes.starts_with(b"\xff\xd8\xff"),
+        "image/gif" => bytes.starts_with(b"GIF8"),
+        "image/webp" => bytes.len() >= 12 && &bytes[8..12] == b"WEBP",
+        _ => false,
+    };
+    if !signature_ok {
+        return Err((
+            "TOOL_BINARY_CONTENT".into(),
+            format!("{display} does not look like a valid {mime} image"),
+        ));
+    }
+    use base64::Engine as _;
+    let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(json!({
+        "path": display,
+        "text": format!("Image file {display} ({size} bytes, {mime}); the image is attached to this result."),
+        "images": [{ "data": data, "mimeType": mime }],
+    }))
+}
+
 fn tool_read(
     workspace: Option<&Path>,
     scratch: Option<&Path>,
@@ -1264,6 +1346,9 @@ fn tool_read(
         .extension()
         .map(|ext| ext.to_string_lossy().to_lowercase());
     if let Some(ext) = &extension {
+        if let Some(mime) = inline_image_mime(ext) {
+            return read_image_block(&resolved, &display, meta.len(), mime);
+        }
         if BINARY_EXTENSIONS.contains(&ext.as_str()) {
             return Err((
                 "TOOL_BINARY_CONTENT".into(),
@@ -1411,16 +1496,6 @@ fn tool_edit(
         .get("path")
         .and_then(|v| v.as_str())
         .ok_or_else(|| hashline::ToolError::new("INVALID_ARGUMENT", "path required"))?;
-    let tag = args.get("tag").and_then(|v| v.as_str()).ok_or_else(|| {
-        hashline::ToolError::new(
-            "EDIT_TAG_REQUIRED",
-            "tag required; pass the 4-hex tag from the latest Read, Grep, Write, or Edit",
-        )
-    })?;
-    let ops = args
-        .get("ops")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| hashline::ToolError::new("INVALID_ARGUMENT", "ops required"))?;
     let (resolved, root_kind) =
         resolve_tool_path_with_external(root, scratch, path, allow_external_paths)
             .map_err(|e| hashline::ToolError::new(e.clone(), e))?;
@@ -1435,13 +1510,68 @@ fn tool_edit(
             hashline::ToolError::new("TOOL_FAILED", format!("read failed: {e}"))
         }
     })?;
+    let legacy_old = args.get("old_string").and_then(Value::as_str);
+    let legacy_new = args.get("new_string").and_then(Value::as_str);
+    let (tag, ops) = match (
+        args.get("tag").and_then(Value::as_str),
+        args.get("ops").and_then(Value::as_str),
+        legacy_old,
+        legacy_new,
+    ) {
+        (Some(tag), Some(ops), _, _) => (tag.to_string(), ops.to_string()),
+        (None, None, Some(old), Some(new)) => {
+            let file = hashline::normalize_file(&live);
+            let tag = hashline::tag_of_lf_text(&file.text);
+            let matches: Vec<_> = file
+                .text
+                .match_indices(old)
+                .map(|(start, _)| start)
+                .collect();
+            if matches.is_empty() {
+                return Err(hashline::ToolError::new(
+                    "EDIT_LEGACY_MATCH_FAILED",
+                    format!(
+                        "old_string not found in {path}; re-read the file to verify the content"
+                    ),
+                ));
+            }
+            if matches.len() > 1 {
+                return Err(hashline::ToolError::new(
+                    "EDIT_LEGACY_MATCH_FAILED",
+                    format!(
+                        "old_string must match exactly once; found {} matches in {path}",
+                        matches.len()
+                    ),
+                ));
+            }
+            let start = matches[0];
+            let first_line = file.text[..start].bytes().filter(|b| *b == b'\n').count() + 1;
+            let old_lines = old.split('\n').count().max(1);
+            let mut ops = format!("PUT {first_line}.={}:\n", first_line + old_lines - 1);
+            for line in new.split('\n') {
+                ops.push('+');
+                ops.push_str(line);
+                ops.push('\n');
+            }
+            (tag, ops)
+        }
+        (None, _, _, _) => {
+            return Err(hashline::ToolError::new(
+                "EDIT_TAG_REQUIRED",
+                "tag required; pass the 4-hex tag from the latest Read, Grep, Write, or Edit",
+            ));
+        }
+        (_, None, _, _) => {
+            return Err(hashline::ToolError::new("INVALID_ARGUMENT", "ops required"));
+        }
+    };
     let display = display_tool_path(root_kind, root, &resolved);
     let canonical = hashline::canonical_key(&resolved);
     let (file, success) = hashline::apply_edit(
         &display,
         &canonical,
-        tag,
-        ops,
+        &tag,
+        &ops,
         &live,
         hashline.map(|c| c.session_id),
         hashline.map(|c| c.store),
@@ -3297,6 +3427,98 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn read_returns_image_blocks_for_image_files() {
+        // Minimal real signatures so the sniffing branch is exercised.
+        let png = b"\x89PNG\r\n\x1a\nfake-png-body";
+        let jpeg = b"\xff\xd8\xff\xe0fake-jpeg-body";
+        let gif = b"GIF89afake-gif-body";
+        let webp = b"RIFF\x00\x00\x00\x00WEBPVP8 fake-webp-body";
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("a.png"), png).unwrap();
+        std::fs::write(dir.path().join("b.jpeg"), jpeg).unwrap();
+        std::fs::write(dir.path().join("c.gif"), gif).unwrap();
+        std::fs::write(dir.path().join("d.webp"), webp).unwrap();
+
+        let result = execute_tool(
+            Some(dir.path()),
+            None,
+            "Read",
+            &serde_json::json!({ "path": "a.png" }),
+            5_000,
+        )
+        .await;
+        assert!(
+            result.ok,
+            "png should read as an image block: {:?}",
+            result.error_code
+        );
+        let content = result.content.as_object().expect("object result");
+        let images = content["images"].as_array().expect("images array");
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0]["mimeType"], "image/png");
+        use base64::Engine as _;
+        assert_eq!(
+            base64::engine::general_purpose::STANDARD
+                .decode(images[0]["data"].as_str().unwrap())
+                .unwrap(),
+            png
+        );
+        assert!(content["text"].as_str().unwrap().contains("a.png"));
+
+        for name in ["b.jpeg", "c.gif", "d.webp"] {
+            let result = execute_tool(
+                Some(dir.path()),
+                None,
+                "Read",
+                &serde_json::json!({ "path": name }),
+                5_000,
+            )
+            .await;
+            assert!(result.ok, "{name} should read as an image block");
+        }
+    }
+
+    #[tokio::test]
+    async fn read_refuses_image_extension_with_non_image_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("fake.png"), b"plain text, not a png").unwrap();
+        let result = execute_tool(
+            Some(dir.path()),
+            None,
+            "Read",
+            &serde_json::json!({ "path": "fake.png" }),
+            5_000,
+        )
+        .await;
+        assert!(!result.ok);
+        assert_eq!(result.error_code.as_deref(), Some("TOOL_BINARY_CONTENT"));
+    }
+
+    #[tokio::test]
+    async fn read_refuses_oversized_images() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut big = vec![0u8; 10_000_001];
+        big[..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        let path = dir.path().join("big.png");
+        std::fs::write(&path, &big).unwrap();
+        let result = execute_tool(
+            Some(dir.path()),
+            None,
+            "Read",
+            &serde_json::json!({ "path": "big.png" }),
+            5_000,
+        )
+        .await;
+        assert!(!result.ok);
+        assert_eq!(result.error_code.as_deref(), Some("TOOL_FAILED"));
+
+        // Simulate the file growing after metadata was checked: the bounded
+        // read must still reject it without trusting the stale size argument.
+        let error = read_image_block(&path, "big.png", 1, "image/png").unwrap_err();
+        assert_eq!(error.0, "TOOL_FAILED");
+    }
+
+    #[tokio::test]
     async fn security_denylist_blocks_read_write_edit_and_hides_search_results() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join(".env"), "SECRET_TOKEN=needle\n").unwrap();
@@ -4478,6 +4700,55 @@ mod tests {
 
         let written = std::fs::read_to_string(&target).unwrap();
         assert_eq!(written, "line one\r\nline TWO replaced\r\nline three\r\n");
+    }
+
+    #[tokio::test]
+    async fn edit_accepts_legacy_old_string_new_string_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("legacy.txt");
+        std::fs::write(&target, "fn main() {\n    println!(\"hello\");\n}\n").unwrap();
+
+        // Model sends old_string and new_string without tag or ops
+        let result = execute_tool(
+            Some(dir.path()),
+            None,
+            "Edit",
+            &serde_json::json!({
+                "path": "legacy.txt",
+                "old_string": "    println!(\"hello\");",
+                "new_string": "    println!(\"world\");"
+            }),
+            5_000,
+        )
+        .await;
+        assert!(
+            result.ok,
+            "Edit with legacy shape should succeed: {:?}",
+            result.content
+        );
+        assert_eq!(result.content["tag"].as_str().unwrap().len(), 4);
+
+        let written = std::fs::read_to_string(&target).unwrap();
+        assert_eq!(written, "fn main() {\n    println!(\"world\");\n}\n");
+
+        // Fails cleanly when old_string is not found
+        let not_found = execute_tool(
+            Some(dir.path()),
+            None,
+            "Edit",
+            &serde_json::json!({
+                "path": "legacy.txt",
+                "old_string": "non_existent_text",
+                "new_string": "replacement"
+            }),
+            5_000,
+        )
+        .await;
+        assert!(!not_found.ok);
+        assert_eq!(
+            not_found.error_code.as_deref(),
+            Some("EDIT_LEGACY_MATCH_FAILED")
+        );
     }
 
     #[tokio::test]

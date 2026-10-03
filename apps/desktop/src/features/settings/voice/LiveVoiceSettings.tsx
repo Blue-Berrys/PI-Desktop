@@ -29,8 +29,8 @@ export function LiveVoiceSettings({
   const [providersLoadFailed, setProvidersLoadFailed] = useState(false);
   const [providersRequest, setProvidersRequest] = useState(0);
   const setSettingsTab = useAppStore((state) => state.setSettingsTab);
+  const showToast = useAppStore((state) => state.showToast);
   const [saving, setSaving] = useState(false);
-  const [saveFailed, setSaveFailed] = useState(false);
   const [drafts, setDrafts] = useState<Record<string, { modelId?: string; voice?: string }>>({});
   const bindingByAdapter = useMemo(() => {
     const result = new Map<Adapter, LiveBinding>();
@@ -61,12 +61,11 @@ export function LiveVoiceSettings({
 
   const save = async (next: LiveVoiceSettings) => {
     setSaving(true);
-    setSaveFailed(false);
     try {
       await saveSettings({ liveVoice: next });
       await controller.refreshStatus();
     } catch {
-      setSaveFailed(true);
+      showToast(t("liveVoice.saveFailed"), { variant: "error" });
     } finally {
       setSaving(false);
     }
@@ -243,7 +242,6 @@ export function LiveVoiceSettings({
             </Button>
           </div>
         ) : null}
-        {saveFailed ? <div className="live-voice-error" role="alert">{t("liveVoice.saveFailed")}</div> : null}
       </SettingsCard>
       {renderAdapter("codex-live")}
       {renderAdapter("gemini-live")}
