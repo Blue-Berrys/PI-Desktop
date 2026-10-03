@@ -809,6 +809,10 @@ system while preserving their different data ownership:
   list under the status text (same notes as the ambient banner; D164). The
   full-history modal remains available when the app is up to date or update
   checks are disabled in development
+- Dismissing an update applies to that version across restarts. In-app
+  dismissal cancels an active download and prevents install-on-quit; discovery
+  continues, and a newer version clears the dismissal and resumes automatic
+  delivery.
 
 ## 3. Navigation rules
 

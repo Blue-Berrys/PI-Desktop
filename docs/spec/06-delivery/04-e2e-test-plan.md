@@ -13080,22 +13080,27 @@ are withdrawn with ADR 0165.
   Dismiss it, navigate away and back, repeat the check, then restart and check
   again. 4) Confirm the same version does not raise another notice, while the
   Settings row still shows it and opens Releases. 5) Select Automatic and
-  confirm the existing in-app download/install behavior resumes. 6) Launch the
-  portable ZIP profile and confirm Manual is the default; inspect the warning
-  before explicitly selecting Automatic.
+  surface an available version. Dismiss the in-app banner while downloading;
+  verify the transfer is cancelled and the update will not install on quit.
+  Restart, check the same version again, and verify it remains dismissed and
+  does not download. Then surface a newer version and verify automatic
+  downloading resumes. 6) Launch the portable ZIP profile and confirm Manual
+  is the default; inspect the warning before explicitly selecting Automatic.
 - **Expected**: The preference persists per installation. Manual performs
   discovery only and stores the last reminded version so repeated checks and
-  app restarts do not repeat the notice; the Info row remains actionable.
-  Automatic retains the existing installer behavior where supported. ZIP and
-  legacy portable builds default to Manual, and Automatic is an explicit,
-  warned opt-in that can replace the extracted copy with NSIS.
+  app restarts do not repeat the notice; the Info row remains actionable. A
+  dismissed version stays ignored across restarts in either mode. In-app
+  dismissal cancels an active transfer and prevents install-on-quit for that
+  version; a newer release clears the dismissal and resumes automatic delivery.
+  ZIP and legacy portable builds default to Manual, and Automatic is an
+  explicit, warned opt-in that can replace the extracted copy with NSIS.
 - **Specs linked**: `03-runtime/07-process-model.md`,
   `04-ux/09-interaction-patterns.md`, ADR 0022 / D628
 - **Acceptance**: Quality (settings interaction and release safety)
 - **Milestone**: M6+
 - **Status**: Setting selection/persistence covered by
-  `pnpm test:e2e:settings-scroll`; mode/reminder policy covered by
-  `update-preference.test.mjs`. Packaged Windows installer journey remains
+  `pnpm test:e2e:settings-scroll`; dismissal and download cancellation covered
+  by `updater-controller.test.mjs`. Packaged Windows installer journey remains
   runner validation.
 
 #### E2E-213: The first Composer model menu paint keeps configured aliases
