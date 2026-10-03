@@ -14,6 +14,7 @@ import { api } from "../../lib/api";
 import { resolveContextUsageDisplay } from "../../lib/context-usage";
 import { HelpIcon, Input, SegmentedControl } from "../../components/ui";
 import { SettingsMenuSelect } from "../../components/settings/SettingsMenuSelect";
+import { useAppStore } from "../../stores/app-store";
 
 /**
  * One settings decision: the title and its control on a single line.
@@ -106,7 +107,7 @@ export function CommandShellRow({
   const { t } = useTranslation();
   const [catalog, setCatalog] = useState<CommandShellCatalog | null>(null);
   const [loadError, setLoadError] = useState(false);
-  const [saveError, setSaveError] = useState(false);
+  const showToast = useAppStore((state) => state.showToast);
   const [selectedOverride, setSelectedOverride] =
     useState<CommandShellId | null>(null);
   const [saving, setSaving] = useState(false);
@@ -162,7 +163,6 @@ export function CommandShellRow({
     const choice = catalog.choices.find((candidate) => candidate.id === value);
     if (!choice || !choice.available) return;
     setSaving(true);
-    setSaveError(false);
     setSelectedOverride(choice.id);
     try {
       await saveSettings({ defaultCommandShell: choice.id });
@@ -178,7 +178,7 @@ export function CommandShellRow({
       );
     } catch {
       setSelectedOverride(null);
-      setSaveError(true);
+      showToast(t("settings.commandShellSaveError"), { variant: "error" });
     } finally {
       setSaving(false);
     }
@@ -220,11 +220,6 @@ export function CommandShellRow({
         )}
         {effectiveStatus ? (
           <span className="settings-command-shell-status">{effectiveStatus}</span>
-        ) : null}
-        {saveError ? (
-          <span className="settings-command-shell-state error" role="status">
-            {t("settings.commandShellSaveError")}
-          </span>
         ) : null}
       </div>
     </SettingsRow>
@@ -296,7 +291,7 @@ export function LargePasteThresholdRow({
     settings.largePasteThreshold,
   );
   const [draft, setDraft] = useState(String(currentThreshold));
-  const [saveError, setSaveError] = useState(false);
+  const showToast = useAppStore((state) => state.showToast);
 
   useEffect(() => {
     setDraft(String(currentThreshold));
@@ -312,15 +307,13 @@ export function LargePasteThresholdRow({
         : currentThreshold;
     setDraft(String(next));
     if (next === currentThreshold) {
-      setSaveError(false);
       return;
     }
-    setSaveError(false);
     try {
       await saveSettings({ largePasteThreshold: next });
     } catch {
       setDraft(String(currentThreshold));
-      setSaveError(true);
+      showToast(t("settings.largePasteThresholdSaveError"), { variant: "error" });
     }
   };
 
@@ -338,7 +331,6 @@ export function LargePasteThresholdRow({
           inputMode="numeric"
           value={draft}
           aria-label={t("settings.largePasteThreshold")}
-          aria-invalid={saveError}
           onChange={(event) => setDraft(event.target.value)}
           onBlur={() => void commit()}
           onKeyDown={(event) => {
@@ -348,11 +340,6 @@ export function LargePasteThresholdRow({
             }
           }}
         />
-        {saveError ? (
-          <span className="settings-command-shell-state error" role="status">
-            {t("settings.largePasteThresholdSaveError")}
-          </span>
-        ) : null}
       </div>
     </SettingsRow>
   );

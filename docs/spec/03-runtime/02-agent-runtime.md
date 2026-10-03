@@ -372,16 +372,14 @@ The complete visible transcript and the model context are separate views of
 the same session. A durable checkpoint summarizes older model context while
 the renderer continues to show every original user, assistant, and tool row.
 
-PI-Desktop reuses pi-agent-core's `convertToLlm`, `estimateContextTokens`,
-`prepareCompaction`, and `compact` primitives, and applies the same session
-context projection pi used to export as `buildSessionContext` (slice from the
-newest compaction, then `compactionSummary` before the retained tail). pi 0.85
-moved that helper off the public package export and made the remaining
-internal builder async for custom-entry projectors; the desktop runtime keeps
-a synchronous local copy because it synthesizes only message and compaction
-entries. The desktop runtime owns when they run and how the result crosses the
-Rust storage boundary; OpenCode DCP is an AGPL-3.0 behavioral reference only,
-not a linked or copied dependency.
+PI-Desktop uses pi-agent-core for the agent loop and stable agent/event/tool
+types, and pi-ai for provider-facing requests and message estimation. The
+runtime owns its context projection, LLM-message conversion, token-estimation
+adapter, compaction cut-point selection, and summary generation because the
+older experimental pi-agent-core harness APIs have been removed. These helpers
+preserve the existing session/checkpoint behavior while keeping the Rust host
+as the only durable session owner; OpenCode DCP remains an AGPL-3.0 behavioral
+reference only, not a linked or copied dependency.
 
 Compaction follows Codex's mechanism (ADR 0064, amended by D623): it remains
 inline at turn boundaries, and the model can request it through `new_context`.
@@ -425,11 +423,10 @@ emits `compaction_end`. The blocking path composes the two back to back.
 
 **What survives a checkpoint.** A successful checkpoint leaves the model context
 as the summary plus, at most, one **user** message; assistant and tool messages
-are dropped from model context and remain in the visible transcript. pi's
-`prepareCompaction` still chooses the cut point, so its turn-boundary and
-split-turn handling are preserved, but the runtime then folds the split-turn
-prefix and the recent tail back into the summary input, so the summary covers
-the whole compacted range and nothing crosses the boundary uncovered.
+are dropped from model context and remain in the visible transcript. The
+runtime-owned preparation chooses the cut point and preserves turn-boundary
+and split-turn handling, then folds the split-turn prefix and recent tail back
+into the summary input so the summary covers the whole compacted range.
 
 A **retained-tail fallback** is the exception, because no summary covers its
 range: it keeps the real recent window — the newest contiguous messages of the
@@ -503,8 +500,8 @@ The hard boundary is the model context window minus request headroom. Automatic
 compaction starts at 90% of `hardLimit`; this deterministic margin is not
 configurable. Headroom is the maximum of a 16,384-token reserve floor, model
 maximum output capped at 25% of the context window, and a 5% safety margin. The
-reserve floor is itself capped at half the window. The cut-point target passed
-to pi is derived from the model window as 20% of the hard budget clamped to
+reserve floor is itself capped at half the window. The cut-point target used by
+the runtime-owned preparation is derived from the model window as 20% of the hard budget clamped to
 8,000–64,000 tokens, then capped at half the hard budget; it decides where the
 boundary falls, not what survives it. The active-user retention limit is
 20,000 tokens, capped at half the hard budget so retention alone cannot fill a
@@ -514,10 +511,10 @@ recovery notice leave, so recovery cannot install a checkpoint the guard
 rejects. None of these values are configurable.
 
 **Estimate calibration (D606).** Every threshold above is compared against one
-number, corrected against observed request usage. pi's `estimateContextTokens`
-anchors on the last assistant usage and estimates everything after it as
-`chars / 4`: that constant under-counts CJK text, and with no anchor left it
-omits system/tool overhead. The budget also computes the output-cap estimator
+number, corrected against observed request usage. The runtime estimator anchors
+on the last assistant usage and delegates provider-message estimation to
+pi-ai; desktop-only rows use the existing character heuristic. With no usage
+anchor, the budget also computes the output-cap estimator
 over non-system conversation messages plus the current system prompt and active
 tool schemas. System-transcript rows are metadata snapshots of that same prompt
 and are excluded from this component, so the request estimate counts the prompt

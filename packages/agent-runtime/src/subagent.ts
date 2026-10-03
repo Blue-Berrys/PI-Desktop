@@ -24,7 +24,6 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   Agent,
-  convertToLlm,
   type AfterToolCallContext,
   type AfterToolCallResult,
   type AgentEvent,
@@ -59,6 +58,7 @@ import type { RuntimeProviderConfig } from "./provider-binding.js";
 import { clampThinkingLevel } from "./thinking-level.js";
 import { subagentModelBinding, type SubagentProviderRetryState } from "./subagent-model-binding.js";
 import { contextBudgetFor } from "./context-budget.js";
+import { convertToLlm } from "./pi-runtime-messages.js";
 import {
   delegateRetentionMode,
   delegateSummaryModels,

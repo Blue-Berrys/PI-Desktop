@@ -278,11 +278,12 @@ E2E-SESSION-completion-notice-allows-silence。
 同一个会话。持久检查点总结了旧模型上下文，同时
 渲染器继续显示每个原始用户、助手和工具行。
 
-PI-Desktop 复用 pi-agent-core 的 `buildSessionContext`、`convertToLlm`、
-`estimateContextTokens`、`prepareCompaction` 和 `compact` 原语。桌面运行时拥有
-这些原语的运行时机，以及结果如何穿过 Rust 存储
-边界； OpenCode DCP 仅是 AGPL-3.0 行为参考，不是链接或
-复制的依赖关系。
+pi-agent-core 提供 Agent 循环及稳定的 agent/event/tool 类型，pi-ai 提供面向
+提供商的请求与消息估算。由于旧版实验性 harness API 已被移除，运行时自行维护
+上下文投影、LLM 消息转换、token 估算适配器、压缩切点选择和摘要生成。这些实现
+保留现有会话与检查点行为，并继续由 Rust host 独占持久会话状态；OpenCode DCP
+仅作为 AGPL-3.0 行为参考，不是链接或复制的依赖关系。详细依赖边界见
+[pi 运行时依赖边界](../02-architecture/06-pi-runtime-dependency-boundary.md)。
 
 压缩遵循 Codex 的机制 (ADR 0064)：它总是内联发生在
 回合边界，模型可以通过`new_context`请求，每次compaction
@@ -323,11 +324,9 @@ pi 0.84.4+ 只在循环将要在同一次运行中开启另一个助手回合时
 发出 `compaction_end`。阻塞路径将两者背靠背组成。
 
 **在检查点中幸存下来的内容。** 成功检查点留下的模型上下文是
-摘要以及最多一条**用户**消息；助手和工具消息是
-从模型上下文中删除并保留在可见的转录本中。圆周率
-`prepareCompaction` 仍然选择切点，因此其回合边界和
-保留分割回合处理，但运行时会折叠分割回合
-前缀和最近的尾部返回到摘要输入中，因此摘要涵盖
+摘要以及最多一条**用户**消息；助手和工具消息会从模型上下文中删除，
+但仍保留在可见的转录本中。运行时自有的准备逻辑选择切点并保留回合边界
+和分割回合处理，然后把分割回合前缀和最近尾部折叠回摘要输入，因此摘要涵盖
 整个紧凑的范围内，没有任何东西跨越边界而未被覆盖。
 
 **保留尾部回退**是例外，因为没有摘要覆盖它负责的范围：它保留真实的近期窗口——
