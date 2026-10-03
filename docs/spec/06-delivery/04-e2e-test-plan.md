@@ -16295,3 +16295,13 @@ renderer's durable transcript reads. No real model or provider is contacted.
 - Installed Electron, real account/paid API and cross-version rollback are
   separate release qualification. No MCP, Codemode or virtual-router migration
   is included. See `docs/project/pi-0991-adoption.md` for candidate evidence.
+
+### Imported-extension GUI executable discovery regression (#1173)
+
+Start dependency installation with a GUI-like PATH that cannot resolve Node/npm
+and a trusted fixture installation in `~/.local/bin`. Validation and both npm
+stages must use that installation, preserve the application PATH, and avoid shell
+startup probing. Explicit selections keep their bin directory first. Missing
+installations still return `npm-unavailable` and retain native picker recovery.
+The executable integration fixture uses real isolated child processes and checks
+registry-only installation and credential isolation.
