@@ -1884,6 +1884,7 @@ sklm: {
     new: {
       title: "새로 만들기",
       open: "새로 만들기",
+      pluginPanels: "플러그인 패널",
     },
     closeTab: "{{name}} 닫기",
     tabs: {

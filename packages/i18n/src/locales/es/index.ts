@@ -1868,7 +1868,8 @@ sklm: {
     "tabsLabel": "Pestañas del panel lateral",
     "new": {
       "title": "Nuevo",
-      "open": "Nuevo"
+      "open": "Nuevo",
+      "pluginPanels": "Paneles de plugins"
     },
     "closeTab": "Cerrar {{name}}",
     "tabs": {

@@ -1855,6 +1855,7 @@ sklm: {
     new: {
       title: "新增",
       open: "新增",
+      pluginPanels: "外掛面板",
     },
     closeTab: "關閉{{name}}",
     tabs: {

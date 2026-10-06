@@ -1874,6 +1874,7 @@ sklm: {
     new: {
       title: "Yeni",
       open: "Yeni",
+      pluginPanels: "Eklenti panelleri",
     },
     closeTab: "{{name}} öğesini kapat",
     tabs: {

@@ -1819,7 +1819,8 @@ export const ptBR = {
     tabsLabel: "Abas do painel lateral",
     new: {
       title: "Novo",
-      open: "Novo"
+      open: "Novo",
+      pluginPanels: "Painéis de plugins"
     },
     closeTab: "Fechar {{name}}",
     tabs: {
